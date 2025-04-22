@@ -3,7 +3,7 @@ services:
     name: coeur
     env: python
     buildCommand: python -m pip install --upgrade pip && pip install protobuf==3.20.* && pip install -r requirements.txt && pip install gdown pyrebase4 gunicorn reportlab && python download_models.py
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 4 --threads 2 --worker-class=gthread
     envVars:
       - key: PYTHON_VERSION
         value: 3.8.10
@@ -11,3 +11,7 @@ services:
         value: 10000
       - key: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION
         value: python
+      - key: DEPLOYMENT_ENV
+        value: production
+      - key: PYTHONUNBUFFERED
+        value: "true"
