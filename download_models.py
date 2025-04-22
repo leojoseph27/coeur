@@ -13,12 +13,11 @@ os.makedirs('heart/models', exist_ok=True)
 os.makedirs('archive/variables', exist_ok=True)
 
 # File mappings with Google Drive file IDs
-# Replace these with your actual Google Drive file IDs after uploading
 MODEL_FILES = {
-    'ecg project/best_model.pth': 'YOUR_FILE_ID_HERE',
-    'heart/models/audio_model.h5': 'YOUR_FILE_ID_HERE',
-    'archive/variables/variables.data-00000-of-00001': 'YOUR_FILE_ID_HERE',
-    'archive/saved_model.pb': 'YOUR_FILE_ID_HERE'
+    'ecg project/best_model.pth': '1aV_W0eBLf53-t7MseAscvwh_zLAhdwep',
+    'heart/models/audio_model.h5': '1hXPE11br4jGlHK_QGWnGkD1HWKZQ_ttx',
+    'archive/saved_model.pb': '1QdREwyTrDhYh7w5NkS7BO_yNYvwBFupV',
+    'archive/variables/variables.data-00000-of-00001': '1Amcgy8C2-X3At6ww4IKzZHWp9r18tK9t'
 }
 
 def download_models():

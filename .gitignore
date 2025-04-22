@@ -22,11 +22,10 @@ temp/
 *.env
 
 # Large model files (to be downloaded from Google Drive)
-# Comment these out temporarily for initial upload, then uncomment
-# ecg project/best_model.pth
-# heart/models/audio_model.h5
-# archive/variables/variables.data-00000-of-00001
-# archive/saved_model.pb
+ecg project/best_model.pth
+heart/models/audio_model.h5
+archive/variables/variables.data-00000-of-00001
+archive/saved_model.pb
 
 # Model files are tracked by Git LFS
 # Don't ignore these as they are handled by Git LFS
