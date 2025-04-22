@@ -58,4 +58,5 @@ gevent-websocket==0.10.1
 python-multipart==0.0.6
 pydub==0.25.1
 resampy==0.4.2
-audioread==3.0.1 
+audioread==3.0.1
+reportlab==4.1.0 
