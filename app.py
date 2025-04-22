@@ -20,13 +20,12 @@ import json
 import torch
 from detecting_anomaly_in_ecg_data_using_autoencoder_with_pytorch import Autoencoder
 import firebase_admin
-from firebase_admin import credentials, auth, db
+from firebase_admin import credentials, auth, db, storage
 from datetime import datetime
 import math
 import requests
 import google.generativeai as genai
 import time
-import pyrebase
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
@@ -43,7 +42,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Firebase configuration for client-side
+# Firebase configuration for client-side JavaScript
 FIREBASE_CONFIG = {
     "apiKey": os.getenv("FIREBASE_API_KEY"),
     "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN"),
@@ -74,15 +73,15 @@ cred = credentials.Certificate({
     "universe_domain": os.getenv("FIREBASE_UNIVERSE_DOMAIN")
 })
 
+# Initialize Firebase Admin with both database and storage
 firebase_admin.initialize_app(cred, {
-    'databaseURL': os.getenv("FIREBASE_DATABASE_URL")
+    'databaseURL': os.getenv("FIREBASE_DATABASE_URL"),
+    'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
 })
 
-# Initialize Pyrebase for client-side operations
-firebase = pyrebase.initialize_app(FIREBASE_CONFIG)
-
-# Get database reference
-db = firebase_admin.db.reference()
+# Get database and storage references
+db_ref = firebase_admin.db.reference()
+bucket = storage.bucket()
 
 # Configure Google Gemini API
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
@@ -376,7 +375,7 @@ def handle_emergency():
             return jsonify({'error': 'User not authenticated'}), 401
             
         # Create a new emergency record in Firebase
-        emergency_ref = db.child(f'emergencies/{user_id}').push()
+        emergency_ref = db_ref.child(f'emergencies/{user_id}').push()
         emergency_data = {
             'type': data.get('type', 'Emergency'),
             'description': data.get('description', ''),
@@ -408,7 +407,7 @@ def update_emergency(emergency_id):
             return jsonify({'error': 'User not authenticated'}), 401
             
         # Update the emergency record in Firebase
-        emergency_ref = db.child(f'emergencies/{user_id}/{emergency_id}')
+        emergency_ref = db_ref.child(f'emergencies/{user_id}/{emergency_id}')
         emergency_ref.update({
             'status': data.get('status', 'resolved'),
             'updatedAt': firebase_admin.db.ServerValue.TIMESTAMP
@@ -425,7 +424,7 @@ def toggle_volunteer():
     if 'user_id' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
     
-    user_ref = db.reference(f'users/{session["user_id"]}')
+    user_ref = db_ref.reference(f'users/{session["user_id"]}')
     current_status = user_ref.child('is_volunteer').get()
     
     user_ref.update({'is_volunteer': not current_status})
@@ -441,7 +440,7 @@ def update_volunteer_location():
     lat = data.get('lat')
     lng = data.get('lng')
     
-    db.reference(f'users/{session["user_id"]}/location').set({
+    db_ref.reference(f'users/{session["user_id"]}/location').set({
         'lat': lat,
         'lng': lng,
         'timestamp': datetime.now().isoformat()
@@ -633,7 +632,7 @@ def handle_emergency_contacts():
     if request.method == 'GET':
         try:
             # Get user's emergency contacts from Firebase
-            contacts_ref = db.child(f'users/{user_id}/emergency_contacts')
+            contacts_ref = db_ref.child(f'users/{user_id}/emergency_contacts')
             contacts = contacts_ref.get()
             
             if contacts.val():
@@ -653,7 +652,7 @@ def handle_emergency_contacts():
                 return jsonify({'error': 'Name and phone are required'}), 400
             
             # Add contact to Firebase
-            contacts_ref = db.child(f'users/{user_id}/emergency_contacts')
+            contacts_ref = db_ref.child(f'users/{user_id}/emergency_contacts')
             new_contact = contacts_ref.push({
                 'name': name,
                 'phone': phone,
@@ -679,7 +678,7 @@ def handle_emergency_contacts():
                 return jsonify({'error': 'Contact ID is required'}), 400
             
             # Remove contact from Firebase
-            contact_ref = db.child(f'users/{user_id}/emergency_contacts/{contact_id}')
+            contact_ref = db_ref.child(f'users/{user_id}/emergency_contacts/{contact_id}')
             contact_ref.remove()
             
             return jsonify({'status': 'success'})
