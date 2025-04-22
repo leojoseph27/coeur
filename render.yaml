@@ -2,10 +2,12 @@ services:
   - type: web
     name: coeur
     env: python
-    buildCommand: pip install -r requirements.txt && pip install gdown && python download_models.py
+    buildCommand: pip install protobuf==3.20.* && pip install -r requirements.txt && pip install gdown && python download_models.py
     startCommand: python app.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.8.10
       - key: PORT
-        value: 10000 
+        value: 10000
+      - key: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION
+        value: python 

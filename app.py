@@ -1142,12 +1142,5 @@ def download_report():
         return jsonify({'error': 'Failed to download report'}), 500
 
 if __name__ == '__main__':
-    # Get port from environment variable or use default
     port = int(os.environ.get('PORT', 10000))
-    
-    # Use this for development
-    if os.environ.get('FLASK_ENV') == 'development':
-        socketio.run(app, host='0.0.0.0', port=port, debug=True)
-    else:
-        # Use this for production
-        socketio.run(app, host='0.0.0.0', port=port) 
+    socketio.run(app, host='0.0.0.0', port=port) 
