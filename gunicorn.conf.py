@@ -1,9 +1,7 @@
 import os
 
-# Binding
+# Basic Configuration
 bind = f"0.0.0.0:{os.environ.get('PORT', '10000')}"
-
-# Worker Settings
 workers = 2
 worker_class = "geventwebsocket.gunicorn.workers.GeventWebSocketWorker"
 timeout = 120
@@ -13,6 +11,9 @@ accesslog = "-"
 errorlog = "-"
 loglevel = "info"
 
+# Server Mechanics
+preload_app = True
+
 # SSL (if needed)
 keyfile = None
 certfile = None
@@ -21,7 +22,6 @@ certfile = None
 proc_name = "coeur_app"
 
 # Server Mechanics
-preload_app = True
 daemon = False
 pidfile = None
 umask = 0
