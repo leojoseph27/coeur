@@ -10,4 +10,4 @@ services:
       - key: PORT
         value: 10000
       - key: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION
-        value: python 
+        value: python
