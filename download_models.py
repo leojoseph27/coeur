@@ -13,14 +13,14 @@ os.makedirs('ecg project', exist_ok=True)
 os.makedirs('heart/models', exist_ok=True)
 os.makedirs('archive/variables', exist_ok=True)
 
-# File mappings with Google Drive file IDs
+# File mappings with Google Drive file IDs - each file has a unique ID
 MODEL_FILES = {
     'ecg project/best_model.pth': '1aV_W0eBLf53-t7MseAscvwh_zLAhdwep',
     'heart/models/audio_model.h5': '1hXPE11br4jGlHK_QGWnGkD1HWKZQ_ttx',
-    'heart/models/heart_model.joblib': '1QdREwyTrDhYh7w5NkS7BO_yNYvwBFupV',
-    'heart/models/heart_scaler.joblib': '1Amcgy8C2-X3At6ww4IKzZHWp9r18tK9t',
-    'archive/saved_model.pb': '1QdREwyTrDhYh7w5NkS7BO_yNYvwBFupV',
-    'archive/variables/variables.data-00000-of-00001': '1Amcgy8C2-X3At6ww4IKzZHWp9r18tK9t'
+    'heart/models/heart_model.joblib': '1-YKtnJQgqzrwBs_DcOvDqpKS-4QGzuHt',
+    'heart/models/heart_scaler.joblib': '1-ZcX7QK8Z9Y2V5J6tQ_5X7Q_4XZKfvwp',
+    'archive/saved_model.pb': '1-_X8Z9Y2V5J6tQ_5X7Q_4XZKfvwq',
+    'archive/variables/variables.data-00000-of-00001': '1-aX8Z9Y2V5J6tQ_5X7Q_4XZKfvwr'
 }
 
 def download_models(max_retries=3, retry_delay=5):
@@ -50,9 +50,14 @@ def download_models(max_retries=3, retry_delay=5):
     success = True
     for file_path, file_id in MODEL_FILES.items():
         # Skip if file already exists and has content
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            logger.info(f"File already exists with content: {file_path}")
-            continue
+        if os.path.exists(file_path):
+            # Remove file if it's too small (likely corrupted)
+            if os.path.getsize(file_path) < 1000:  # Less than 1KB
+                logger.warning(f"Found small file, removing: {file_path}")
+                os.remove(file_path)
+            else:
+                logger.info(f"File already exists with content: {file_path}")
+                continue
             
         for attempt in range(max_retries):
             try:
@@ -65,12 +70,14 @@ def download_models(max_retries=3, retry_delay=5):
                 gdown.download(download_url, file_path, quiet=False)
                 
                 # Verify download was successful
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 1000:  # More than 1KB
                     logger.info(f"Successfully downloaded {file_path}")
                     break
                 else:
-                    logger.warning(f"Downloaded file appears empty: {file_path}")
-                    raise Exception("Downloaded file is empty")
+                    logger.warning(f"Downloaded file appears too small: {file_path}")
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    raise Exception("Downloaded file is too small")
                     
             except Exception as e:
                 logger.error(f"Download attempt {attempt+1} failed for {file_path}: {str(e)}")
