@@ -13,6 +13,7 @@ loglevel = "info"
 
 # Server Mechanics
 preload_app = True
+daemon = False
 
 # SSL (if needed)
 keyfile = None
@@ -22,7 +23,6 @@ certfile = None
 proc_name = "coeur_app"
 
 # Server Mechanics
-daemon = False
 pidfile = None
 umask = 0
 user = None
