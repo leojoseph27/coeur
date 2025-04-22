@@ -2,17 +2,12 @@ services:
   - type: web
     name: coeur
     env: python
-    buildCommand: |
-      pip install --upgrade pip
-      pip install -r requirements.txt
-      python -m pip install --upgrade protobuf==3.19.6
+    buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app -c gunicorn.conf.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.8.10
+      - key: PORT
+        value: 10000
       - key: PYTHONUNBUFFERED
-        value: "true"
-      - key: WEB_CONCURRENCY
-        value: 4
-      - key: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION
-        value: python 
+        value: "true" 

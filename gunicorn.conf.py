@@ -1,14 +1,12 @@
 import os
-import multiprocessing
 
 # Binding
-bind = "0.0.0.0:" + os.environ.get("PORT", "10000")
+bind = f"0.0.0.0:{os.environ.get('PORT', '10000')}"
 
 # Worker Settings
-workers = int(os.environ.get("WEB_CONCURRENCY", multiprocessing.cpu_count() * 2 + 1))
+workers = 2
 worker_class = "geventwebsocket.gunicorn.workers.GeventWebSocketWorker"
-worker_connections = 1000
-timeout = 600
+timeout = 120
 
 # Logging
 accesslog = "-"
