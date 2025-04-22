@@ -21,9 +21,12 @@ MODEL_FILES = {
 }
 
 def download_models():
-    """Download model files from Google Drive if they don't exist locally."""
+    """
+    Check if model files exist, and download from Google Drive only if they don't.
+    This allows the app to work with either the files in the repository or downloaded files.
+    """
     
-    logger.info("Checking and downloading model files...")
+    logger.info("Checking model files...")
     
     for file_path, file_id in MODEL_FILES.items():
         # Skip if file already exists
@@ -31,8 +34,9 @@ def download_models():
             logger.info(f"File already exists: {file_path}")
             continue
             
-        # Download file from Google Drive
+        # If file is not in the repository, download it from Google Drive
         try:
+            logger.info(f"File not found in repository: {file_path}")
             logger.info(f"Downloading {file_path} from Google Drive...")
             gdown.download(
                 f"https://drive.google.com/uc?id={file_id}",

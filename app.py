@@ -35,14 +35,6 @@ from reportlab.lib.units import inch
 from html import unescape
 import re
 from dotenv import load_dotenv
-from download_models import download_models
-
-# Check and download model files if necessary
-try:
-    download_models()
-except Exception as e:
-    print(f"Warning: Failed to download model files: {str(e)}")
-    print("The application will try to use local model files if available.")
 
 # Load environment variables
 load_dotenv()
@@ -50,6 +42,29 @@ load_dotenv()
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Check if we need to download model files
+MODEL_FILES = [
+    'ecg project/best_model.pth',
+    'heart/models/audio_model.h5',
+    'archive/saved_model.pb',
+    'archive/variables/variables.data-00000-of-00001'
+]
+
+missing_files = []
+for file_path in MODEL_FILES:
+    if not os.path.exists(file_path):
+        missing_files.append(file_path)
+
+# If any files are missing, try to download them
+if missing_files:
+    logger.info(f"Missing model files: {missing_files}")
+    try:
+        from download_models import download_models
+        download_models()
+    except Exception as e:
+        logger.error(f"Warning: Failed to download model files: {str(e)}")
+        logger.error("The application will try to proceed, but some features may not work correctly.")
 
 # Firebase configuration for client-side
 FIREBASE_CONFIG = {
