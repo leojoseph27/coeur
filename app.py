@@ -26,7 +26,7 @@ import math
 import requests
 import google.generativeai as genai
 import time
-import pyrebase4 as pyrebase
+import pyrebase
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
