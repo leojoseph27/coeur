@@ -13,14 +13,14 @@ os.makedirs('ecg project', exist_ok=True)
 os.makedirs('heart/models', exist_ok=True)
 os.makedirs('archive/variables', exist_ok=True)
 
-# File mappings with Google Drive file IDs - each file has a unique ID
+# File mappings with Google Drive file IDs
 MODEL_FILES = {
     'ecg project/best_model.pth': '1aV_W0eBLf53-t7MseAscvwh_zLAhdwep',
     'heart/models/audio_model.h5': '1hXPE11br4jGlHK_QGWnGkD1HWKZQ_ttx',
-    'heart/models/heart_model.joblib': '1-YKtnJQgqzrwBs_DcOvDqpKS-4QGzuHt',
-    'heart/models/heart_scaler.joblib': '1-ZcX7QK8Z9Y2V5J6tQ_5X7Q_4XZKfvwp',
-    'archive/saved_model.pb': '1-_X8Z9Y2V5J6tQ_5X7Q_4XZKfvwq',
-    'archive/variables/variables.data-00000-of-00001': '1-aX8Z9Y2V5J6tQ_5X7Q_4XZKfvwr'
+    'heart/models/heart_model.joblib': '1QdREwyTrDhYh7w5NkS7BO_yNYvwBFupV',
+    'heart/models/heart_scaler.joblib': '1Amcgy8C2-X3At6ww4IKzZHWp9r18tK9t',
+    'archive/saved_model.pb': '1QdREwyTrDhYh7w5NkS7BO_yNYvwBFupV',
+    'archive/variables/variables.data-00000-of-00001': '1Amcgy8C2-X3At6ww4IKzZHWp9r18tK9t'
 }
 
 def download_models(max_retries=3, retry_delay=5):
