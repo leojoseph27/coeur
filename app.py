@@ -55,6 +55,7 @@ FIREBASE_CONFIG = {
 }
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY", "default-secret-key")
 
 # Initialize Firebase Admin
 cred = credentials.Certificate({

@@ -16,22 +16,8 @@ preload_app = True
 daemon = False
 pidfile = None
 
-# SSL (if needed)
-keyfile = None
-certfile = None
-
 # Process Naming
 proc_name = "coeur_app"
-
-# Server Mechanics
-umask = 0
-user = None
-group = None
-tmp_upload_dir = None
-
-# SSL
-ssl_version = "TLS"
-cert_reqs = 0  # ssl.CERT_NONE
 
 # Error handling
 capture_output = True
