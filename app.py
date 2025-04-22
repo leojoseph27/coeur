@@ -36,14 +36,29 @@ from html import unescape
 import re
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging first
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# Check if we need to download model files
+# Create necessary directories
+os.makedirs('reports', exist_ok=True)
+os.makedirs('ecg project', exist_ok=True)
+os.makedirs('heart/models', exist_ok=True)
+os.makedirs('archive/variables', exist_ok=True)
+
+# Load environment variables
+load_dotenv()
+logger.info("Environment variables loaded")
+
+# Set application mode
+DEBUG_MODE = os.environ.get('DEBUG', 'False').lower() == 'true'
+DEPLOYMENT_MODE = os.environ.get('DEPLOYMENT_ENV', 'development')
+logger.info(f"Starting application in {DEPLOYMENT_MODE} mode")
+
+# Check and download model files if needed
 MODEL_FILES = [
     'ecg project/best_model.pth',
     'heart/models/audio_model.h5',
@@ -53,18 +68,27 @@ MODEL_FILES = [
 
 missing_files = []
 for file_path in MODEL_FILES:
-    if not os.path.exists(file_path):
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
         missing_files.append(file_path)
 
-# If any files are missing, try to download them
 if missing_files:
-    logger.info(f"Missing model files: {missing_files}")
+    logger.warning(f"Missing model files: {missing_files}")
     try:
+        # Try to import and use download_models - install gdown if needed
+        try:
+            import gdown
+        except ImportError:
+            logger.info("Installing gdown...")
+            os.system('pip install gdown')
+            import gdown
+            
         from download_models import download_models
-        download_models()
+        download_success = download_models()
+        if not download_success:
+            logger.warning("Some models couldn't be downloaded. Some features may not work.")
     except Exception as e:
-        logger.error(f"Warning: Failed to download model files: {str(e)}")
-        logger.error("The application will try to proceed, but some features may not work correctly.")
+        logger.error(f"Failed to download models: {str(e)}")
+        logger.warning("The application will try to continue, but some features may be unavailable.")
 
 # Firebase configuration for client-side
 FIREBASE_CONFIG = {
@@ -79,68 +103,110 @@ FIREBASE_CONFIG = {
 }
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY")
+app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY", "default-secret-key-for-development")
 socketio = SocketIO(app, async_mode='gevent', cors_allowed_origins="*")
+logger.info("Flask application initialized")
 
 # Initialize Firebase Admin
-cred = credentials.Certificate({
-    "type": os.getenv("FIREBASE_TYPE"),
-    "project_id": os.getenv("FIREBASE_PROJECT_ID"),
-    "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-    "private_key": os.getenv("FIREBASE_PRIVATE_KEY").replace("\\n", "\n"),
-    "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
-    "client_id": os.getenv("FIREBASE_CLIENT_ID"),
-    "auth_uri": os.getenv("FIREBASE_AUTH_URI"),
-    "token_uri": os.getenv("FIREBASE_TOKEN_URI"),
-    "auth_provider_x509_cert_url": os.getenv("FIREBASE_AUTH_PROVIDER_X509_CERT_URL"),
-    "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_X509_CERT_URL"),
-    "universe_domain": os.getenv("FIREBASE_UNIVERSE_DOMAIN")
-})
+try:
+    cred = credentials.Certificate({
+        "type": os.getenv("FIREBASE_TYPE"),
+        "project_id": os.getenv("FIREBASE_PROJECT_ID"),
+        "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
+        "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "").replace("\\n", "\n"),
+        "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
+        "client_id": os.getenv("FIREBASE_CLIENT_ID"),
+        "auth_uri": os.getenv("FIREBASE_AUTH_URI"),
+        "token_uri": os.getenv("FIREBASE_TOKEN_URI"),
+        "auth_provider_x509_cert_url": os.getenv("FIREBASE_AUTH_PROVIDER_X509_CERT_URL"),
+        "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_X509_CERT_URL"),
+        "universe_domain": os.getenv("FIREBASE_UNIVERSE_DOMAIN")
+    })
 
-firebase_admin.initialize_app(cred, {
-    'databaseURL': os.getenv("FIREBASE_DATABASE_URL")
-})
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': os.getenv("FIREBASE_DATABASE_URL")
+    })
+    logger.info("Firebase Admin initialized successfully")
 
-# Initialize Pyrebase for client-side operations
-firebase = pyrebase.initialize_app(FIREBASE_CONFIG)
+    # Initialize Pyrebase for client-side operations
+    firebase = pyrebase.initialize_app(FIREBASE_CONFIG)
 
-# Get database reference
-db = firebase_admin.db.reference()
+    # Get database reference
+    db = firebase_admin.db.reference()
+except Exception as e:
+    logger.error(f"Failed to initialize Firebase: {str(e)}")
+    logger.warning("Firebase functionality may be unavailable")
 
 # Configure Google Gemini API
-os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+try:
+    os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
+    if os.environ["GOOGLE_API_KEY"]:
+        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+        logger.info("Google Gemini API configured successfully")
+    else:
+        logger.warning("GOOGLE_API_KEY not set. AI features will be unavailable.")
+except Exception as e:
+    logger.error(f"Failed to configure Google Gemini API: {str(e)}")
 
-# Comment out the model initialization for now
-# model = genai.GenerativeModel("gemini-2.0-flash")
+# Load the trained models - wrap in try/except to gracefully handle missing models
+heart_model = None
+audio_model = None
+heart_scaler = None
+yamnet_model = None
+ecg_model = None
 
-# Load the trained models
 try:
     logger.info("Loading trained models...")
-    heart_model = joblib.load('heart/models/heart_model.joblib')
-    audio_model = tf.keras.models.load_model('heart/models/audio_model.h5')
-    heart_scaler = joblib.load('heart/models/heart_scaler.joblib')
     
-    # Load YAMNet model for heart sound analysis
+    # Heart disease model
+    if os.path.exists('heart/models/heart_model.joblib'):
+        heart_model = joblib.load('heart/models/heart_model.joblib')
+        logger.info("Heart model loaded successfully")
+    else:
+        logger.warning("Heart model file not found")
+    
+    # Audio model
+    if os.path.exists('heart/models/audio_model.h5'):
+        audio_model = tf.keras.models.load_model('heart/models/audio_model.h5')
+        logger.info("Audio model loaded successfully")
+    else:
+        logger.warning("Audio model file not found")
+    
+    # Heart scaler
+    if os.path.exists('heart/models/heart_scaler.joblib'):
+        heart_scaler = joblib.load('heart/models/heart_scaler.joblib')
+        logger.info("Heart scaler loaded successfully")
+    else:
+        logger.warning("Heart scaler file not found")
+    
+    # YAMNet model for heart sound analysis
     try:
-        yamnet_model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'archive')
-        yamnet_model = hub.load(yamnet_model_path)
-        print(f"INFO:__main__:Successfully loaded YAMNet model from {yamnet_model_path}")
+        if os.path.exists('archive/saved_model.pb'):
+            yamnet_model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'archive')
+            yamnet_model = hub.load(yamnet_model_path)
+            logger.info(f"YAMNet model loaded successfully from {yamnet_model_path}")
+        else:
+            logger.warning("YAMNet model file not found")
     except Exception as e:
-        print(f"WARNING:__main__:Failed to load YAMNet model: {str(e)}")
-        yamnet_model = None
+        logger.error(f"Failed to load YAMNet model: {str(e)}")
     
-    # Load ECG model
-    seq_len = 1
-    n_features = 141
-    ecg_model = Autoencoder(seq_len, n_features)
-    ecg_model.load_state_dict(torch.load('ecg project/best_model.pth', map_location=torch.device('cpu')))
-    ecg_model.eval()
-    
-    logger.info("All models loaded successfully")
+    # ECG model
+    try:
+        if os.path.exists('ecg project/best_model.pth'):
+            seq_len = 1
+            n_features = 141
+            ecg_model = Autoencoder(seq_len, n_features)
+            ecg_model.load_state_dict(torch.load('ecg project/best_model.pth', map_location=torch.device('cpu')))
+            ecg_model.eval()
+            logger.info("ECG model loaded successfully")
+        else:
+            logger.warning("ECG model file not found")
+    except Exception as e:
+        logger.error(f"Failed to load ECG model: {str(e)}")
+        
 except Exception as e:
     logger.error(f"Error loading models: {str(e)}")
-    raise
+    logger.warning("The application will run, but some features may be unavailable")
 
 def extract_embeddings(audio_data):
     """Extract embeddings using YAMNet model."""

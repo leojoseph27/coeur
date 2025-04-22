@@ -2,7 +2,7 @@ services:
   - type: web
     name: coeur
     env: python
-    buildCommand: pip install -r requirements.txt && python -m pip install gdown && (python download_models.py || echo "Will try to download during startup")
+    buildCommand: pip install -r requirements.txt && pip install gdown && python download_models.py
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --worker-class gevent --worker-connections 1000 --timeout 600
     envVars:
       - key: PYTHON_VERSION

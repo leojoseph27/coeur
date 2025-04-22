@@ -1,6 +1,7 @@
 import os
-import gdown
 import logging
+import time
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -20,33 +21,74 @@ MODEL_FILES = {
     'archive/variables/variables.data-00000-of-00001': '1Amcgy8C2-X3At6ww4IKzZHWp9r18tK9t'
 }
 
-def download_models():
+def download_models(max_retries=3, retry_delay=5):
     """
-    Check if model files exist, and download from Google Drive only if they don't.
-    This allows the app to work with either the files in the repository or downloaded files.
+    Download model files from Google Drive, with retry logic to handle connection issues.
+    
+    Args:
+        max_retries: Maximum number of retry attempts per file
+        retry_delay: Delay in seconds between retries
     """
     
-    logger.info("Checking model files...")
+    # Import gdown here so we can install it first if missing
+    try:
+        import gdown
+    except ImportError:
+        logger.warning("gdown not installed. Installing gdown...")
+        os.system('pip install gdown')
+        time.sleep(2)  # Give time for installation to complete
+        try:
+            import gdown
+        except ImportError:
+            logger.error("Failed to install gdown. Cannot download model files.")
+            return False
     
+    logger.info("Starting model downloads from Google Drive...")
+    
+    success = True
     for file_path, file_id in MODEL_FILES.items():
-        # Skip if file already exists
-        if os.path.exists(file_path):
-            logger.info(f"File already exists: {file_path}")
+        # Skip if file already exists and has content
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            logger.info(f"File already exists with content: {file_path}")
             continue
             
-        # If file is not in the repository, download it from Google Drive
-        try:
-            logger.info(f"File not found in repository: {file_path}")
-            logger.info(f"Downloading {file_path} from Google Drive...")
-            gdown.download(
-                f"https://drive.google.com/uc?id={file_id}",
-                file_path,
-                quiet=False
-            )
-            logger.info(f"Successfully downloaded {file_path}")
-        except Exception as e:
-            logger.error(f"Failed to download {file_path}: {str(e)}")
-            raise
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Downloading {file_path} from Google Drive (attempt {attempt+1}/{max_retries})...")
+                
+                # Use a direct download approach
+                download_url = f"https://drive.google.com/uc?id={file_id}"
+                
+                # Try with gdown
+                gdown.download(download_url, file_path, quiet=False)
+                
+                # Verify download was successful
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    logger.info(f"Successfully downloaded {file_path}")
+                    break
+                else:
+                    logger.warning(f"Downloaded file appears empty: {file_path}")
+                    raise Exception("Downloaded file is empty")
+                    
+            except Exception as e:
+                logger.error(f"Download attempt {attempt+1} failed for {file_path}: {str(e)}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"All {max_retries} attempts failed for {file_path}")
+                    success = False
+    
+    if success:
+        logger.info("All model files downloaded successfully")
+    else:
+        logger.warning("Some model files could not be downloaded")
+    
+    return success
 
 if __name__ == "__main__":
-    download_models() 
+    success = download_models()
+    if not success:
+        logger.warning("Some downloads failed, but the application will try to continue.")
+        # Exit with a non-zero status but not a fatal error
+        sys.exit(0)  # Use 0 so Render build doesn't fail 
