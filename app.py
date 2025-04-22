@@ -20,12 +20,13 @@ import json
 import torch
 from detecting_anomaly_in_ecg_data_using_autoencoder_with_pytorch import Autoencoder
 import firebase_admin
-from firebase_admin import credentials, auth, db, storage
+from firebase_admin import credentials, auth, db
 from datetime import datetime
 import math
 import requests
 import google.generativeai as genai
 import time
+import pyrebase
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
@@ -34,6 +35,14 @@ from reportlab.lib.units import inch
 from html import unescape
 import re
 from dotenv import load_dotenv
+from download_models import download_models
+
+# Check and download model files if necessary
+try:
+    download_models()
+except Exception as e:
+    print(f"Warning: Failed to download model files: {str(e)}")
+    print("The application will try to use local model files if available.")
 
 # Load environment variables
 load_dotenv()
@@ -42,7 +51,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Firebase configuration for client-side JavaScript
+# Firebase configuration for client-side
 FIREBASE_CONFIG = {
     "apiKey": os.getenv("FIREBASE_API_KEY"),
     "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN"),
@@ -55,7 +64,8 @@ FIREBASE_CONFIG = {
 }
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY", "default-secret-key")
+app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY")
+socketio = SocketIO(app, async_mode='gevent', cors_allowed_origins="*")
 
 # Initialize Firebase Admin
 cred = credentials.Certificate({
@@ -72,15 +82,15 @@ cred = credentials.Certificate({
     "universe_domain": os.getenv("FIREBASE_UNIVERSE_DOMAIN")
 })
 
-# Initialize Firebase Admin with both database and storage
 firebase_admin.initialize_app(cred, {
-    'databaseURL': os.getenv("FIREBASE_DATABASE_URL"),
-    'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
+    'databaseURL': os.getenv("FIREBASE_DATABASE_URL")
 })
 
-# Get database and storage references
-db_ref = firebase_admin.db.reference()
-bucket = storage.bucket()
+# Initialize Pyrebase for client-side operations
+firebase = pyrebase.initialize_app(FIREBASE_CONFIG)
+
+# Get database reference
+db = firebase_admin.db.reference()
 
 # Configure Google Gemini API
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
@@ -98,14 +108,9 @@ try:
     
     # Load YAMNet model for heart sound analysis
     try:
-        # Check if YAMNet model exists
         yamnet_model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'archive')
-        if not os.path.exists(os.path.join(yamnet_model_path, 'saved_model.pb')):
-            print(f"WARNING: YAMNet model file not found at {yamnet_model_path}/saved_model.pb")
-            yamnet_model = None
-        else:
-            yamnet_model = hub.load(yamnet_model_path)
-            print(f"INFO:__main__:Successfully loaded YAMNet model from {yamnet_model_path}")
+        yamnet_model = hub.load(yamnet_model_path)
+        print(f"INFO:__main__:Successfully loaded YAMNet model from {yamnet_model_path}")
     except Exception as e:
         print(f"WARNING:__main__:Failed to load YAMNet model: {str(e)}")
         yamnet_model = None
@@ -125,12 +130,6 @@ except Exception as e:
 def extract_embeddings(audio_data):
     """Extract embeddings using YAMNet model."""
     try:
-        if yamnet_model is None:
-            # Return dummy embeddings if model is not available
-            logger.warning("YAMNet model not available, returning dummy embeddings")
-            dummy_embeddings = np.zeros((10, 1024))
-            return dummy_embeddings.reshape(1, -1, 1024)
-            
         max_frames = 10
         scores, embeddings_output, _ = yamnet_model(audio_data)
         embeddings_output = embeddings_output[:max_frames]
@@ -140,9 +139,7 @@ def extract_embeddings(audio_data):
         return embeddings_output.reshape(1, -1, 1024)
     except Exception as e:
         logger.error(f"Error extracting embeddings: {str(e)}")
-        # Return dummy embeddings on error
-        dummy_embeddings = np.zeros((10, 1024))
-        return dummy_embeddings.reshape(1, -1, 1024)
+        raise
 
 def analyze_ecg(ecg_data, threshold=0.1):
     """Analyze ECG data using the autoencoder model."""
@@ -387,7 +384,7 @@ def handle_emergency():
             return jsonify({'error': 'User not authenticated'}), 401
             
         # Create a new emergency record in Firebase
-        emergency_ref = db_ref.child(f'emergencies/{user_id}').push()
+        emergency_ref = db.child(f'emergencies/{user_id}').push()
         emergency_data = {
             'type': data.get('type', 'Emergency'),
             'description': data.get('description', ''),
@@ -419,7 +416,7 @@ def update_emergency(emergency_id):
             return jsonify({'error': 'User not authenticated'}), 401
             
         # Update the emergency record in Firebase
-        emergency_ref = db_ref.child(f'emergencies/{user_id}/{emergency_id}')
+        emergency_ref = db.child(f'emergencies/{user_id}/{emergency_id}')
         emergency_ref.update({
             'status': data.get('status', 'resolved'),
             'updatedAt': firebase_admin.db.ServerValue.TIMESTAMP
@@ -436,7 +433,7 @@ def toggle_volunteer():
     if 'user_id' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
     
-    user_ref = db_ref.reference(f'users/{session["user_id"]}')
+    user_ref = db.reference(f'users/{session["user_id"]}')
     current_status = user_ref.child('is_volunteer').get()
     
     user_ref.update({'is_volunteer': not current_status})
@@ -452,7 +449,7 @@ def update_volunteer_location():
     lat = data.get('lat')
     lng = data.get('lng')
     
-    db_ref.reference(f'users/{session["user_id"]}/location').set({
+    db.reference(f'users/{session["user_id"]}/location').set({
         'lat': lat,
         'lng': lng,
         'timestamp': datetime.now().isoformat()
@@ -644,7 +641,7 @@ def handle_emergency_contacts():
     if request.method == 'GET':
         try:
             # Get user's emergency contacts from Firebase
-            contacts_ref = db_ref.child(f'users/{user_id}/emergency_contacts')
+            contacts_ref = db.child(f'users/{user_id}/emergency_contacts')
             contacts = contacts_ref.get()
             
             if contacts.val():
@@ -664,7 +661,7 @@ def handle_emergency_contacts():
                 return jsonify({'error': 'Name and phone are required'}), 400
             
             # Add contact to Firebase
-            contacts_ref = db_ref.child(f'users/{user_id}/emergency_contacts')
+            contacts_ref = db.child(f'users/{user_id}/emergency_contacts')
             new_contact = contacts_ref.push({
                 'name': name,
                 'phone': phone,
@@ -690,7 +687,7 @@ def handle_emergency_contacts():
                 return jsonify({'error': 'Contact ID is required'}), 400
             
             # Remove contact from Firebase
-            contact_ref = db_ref.child(f'users/{user_id}/emergency_contacts/{contact_id}')
+            contact_ref = db.child(f'users/{user_id}/emergency_contacts/{contact_id}')
             contact_ref.remove()
             
             return jsonify({'status': 'success'})
@@ -1063,15 +1060,9 @@ def download_report():
         logger.error(f"Error downloading report: {str(e)}")
         return jsonify({'error': 'Failed to download report'}), 500
 
-@app.route("/health")
-def health_check():
-    """Health check endpoint for Render."""
-    return "OK", 200
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    print(f"Starting server on port {port}")
-    # Initialize SocketIO here
-    socketio = SocketIO(app, async_mode='gevent', cors_allowed_origins="*")
-    # Run the app
-    socketio.run(app, host='0.0.0.0', port=port, debug=False) 
+if __name__ == '__main__':
+    # Use this for development
+    socketio.run(app, debug=True)
+else:
+    # Use this for production
+    app = socketio.run(app) 

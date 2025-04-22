@@ -3,7 +3,7 @@ flask-socketio==5.5.1
 numpy>=1.22.0
 pandas==1.3.3
 scikit-learn==1.3.2
-tensorflow-cpu==2.7.0
+tensorflow==2.7.0
 tensorflow-hub==0.12.0
 keras==2.7.0
 librosa==0.8.1
@@ -31,7 +31,7 @@ google-pasta==0.2.0
 grpcio==1.70.0
 h5py==3.1.0
 opt-einsum==3.3.0
-protobuf==3.19.6
+protobuf>=3.19.5,<5.0.0dev
 pyasn1==0.4.8
 pyasn1-modules==0.2.8
 rsa==4.7.2
@@ -43,7 +43,6 @@ torch==2.0.0
 tqdm>=4.65.0
 numba>=0.56.0
 firebase-admin==6.7.0
-requests==2.29.0
 python-socketio==5.12.1
 python-engineio==4.11.2
 simple-websocket==1.1.0
@@ -51,10 +50,7 @@ wsproto==1.2.0
 h11==0.14.0
 bidict==0.23.1
 google-generativeai==0.1.0rc1
-google-api-core==2.16.2
-google-cloud-core==2.4.1
-google-cloud-storage==2.14.0
-google-cloud-firestore==2.14.0
+requests==2.31.0
 python-dotenv==1.0.0
 gunicorn==21.2.0
 gevent==23.9.1
@@ -63,4 +59,4 @@ python-multipart==0.0.6
 pydub==0.25.1
 resampy==0.4.2
 audioread==3.0.1
-reportlab==4.1.0 
+gdown==4.7.3 
