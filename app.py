@@ -1051,14 +1051,12 @@ def download_report():
         logger.error(f"Error downloading report: {str(e)}")
         return jsonify({'error': 'Failed to download report'}), 500
 
-@app.route("/_health")
+@app.route("/health")
 def health_check():
     """Health check endpoint for Render."""
-    return "Healthy", 200
+    return "OK", 200
 
-# Remove or comment out any app.run() calls
 if __name__ == "__main__":
-    # For local development only
-    port = int(os.environ.get("PORT", 5000))
-    print(f"Running on port {port}")
-    app.run(host="0.0.0.0", port=port) 
+    port = int(os.environ.get("PORT", 10000))
+    print(f"Starting Flask server on port {port}")
+    app.run(host="0.0.0.0", port=port, debug=False) 
