@@ -55,8 +55,6 @@ FIREBASE_CONFIG = {
 }
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY")
-socketio = SocketIO(app, async_mode='gevent', cors_allowed_origins="*")
 
 # Initialize Firebase Admin
 cred = credentials.Certificate({
@@ -1058,5 +1056,8 @@ def health_check():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    print(f"Starting Flask server on port {port}")
-    app.run(host="0.0.0.0", port=port, debug=False) 
+    print(f"Starting server on port {port}")
+    # Initialize SocketIO here
+    socketio = SocketIO(app, async_mode='gevent', cors_allowed_origins="*")
+    # Run the app
+    socketio.run(app, host='0.0.0.0', port=port, debug=False) 
