@@ -57,7 +57,7 @@ FIREBASE_CONFIG = {
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY")
-socketio = SocketIO(app)
+socketio = SocketIO(app, async_mode='gevent', cors_allowed_origins="*")
 
 # Initialize Firebase Admin
 cred = credentials.Certificate({
@@ -1053,4 +1053,8 @@ def download_report():
         return jsonify({'error': 'Failed to download report'}), 500
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True) 
+    # Use this for development
+    socketio.run(app, debug=True)
+else:
+    # Use this for production
+    app = socketio.run(app) 
