@@ -26,7 +26,7 @@ import math
 import requests
 import google.generativeai as genai
 import time
-import pyrebase
+import pyrebase4 as pyrebase
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
@@ -1057,5 +1057,5 @@ if __name__ == '__main__':
     socketio.run(app, debug=True)
 else:
     # Use this for production
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.getenv("PORT", 10000))
     app = socketio.run(app, host="0.0.0.0", port=port) 
