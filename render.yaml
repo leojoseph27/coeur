@@ -2,8 +2,16 @@ services:
   - type: web
     name: coeur
     env: python
-    buildCommand: python -m pip install --upgrade pip && pip install protobuf==3.20.* && pip install -r requirements.txt && pip install gdown pyrebase4 gunicorn reportlab && python download_models.py
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 4 --threads 2 --worker-class=gthread
+    buildCommand: >
+      python -m pip install --upgrade pip &&
+      pip install protobuf==3.20.* &&
+      pip install -r requirements.txt &&
+      pip install gdown pyrebase4 gunicorn reportlab eventlet &&
+      python download_models.py &&
+      ls -la heart/models/ &&
+      ls -la ecg\ project/ &&
+      ls -la archive/
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 4 --threads 2 --worker-class=eventlet
     envVars:
       - key: PYTHON_VERSION
         value: 3.8.10
@@ -15,3 +23,5 @@ services:
         value: production
       - key: PYTHONUNBUFFERED
         value: "true"
+      - key: MODELS_PATH
+        value: "/opt/render/project/src"

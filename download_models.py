@@ -17,6 +17,8 @@ os.makedirs('archive/variables', exist_ok=True)
 MODEL_FILES = {
     'ecg project/best_model.pth': '1aV_W0eBLf53-t7MseAscvwh_zLAhdwep',
     'heart/models/audio_model.h5': '1hXPE11br4jGlHK_QGWnGkD1HWKZQ_ttx',
+    'heart/models/heart_model.joblib': '1QdREwyTrDhYh7w5NkS7BO_yNYvwBFupV',
+    'heart/models/heart_scaler.joblib': '1Amcgy8C2-X3At6ww4IKzZHWp9r18tK9t',
     'archive/saved_model.pb': '1QdREwyTrDhYh7w5NkS7BO_yNYvwBFupV',
     'archive/variables/variables.data-00000-of-00001': '1Amcgy8C2-X3At6ww4IKzZHWp9r18tK9t'
 }
