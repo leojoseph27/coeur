@@ -1,0 +1,30 @@
+# Virtual Environment
+venv_new/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and temporary files
+logs/
+temp/
+*.log
+
+# Environment variables
+.env
+.env.*
+*.env
+
+# Model files are tracked by Git LFS
+# Don't ignore these as they are handled by Git LFS
+!*.h5
+!*.pb
+!*.pth
+!*.joblib
+

@@ -1,0 +1,1225 @@
+{% extends "base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+    .container-fluid {
+        padding: 0;
+        height: 100vh;
+        display: flex;
+    }
+    
+    #emergencyMap { 
+        height: 100vh;
+        width: 70%;
+        position: relative;
+    }
+    
+    .control-panel {
+        width: 30%;
+        height: 100vh;
+        background: rgba(26, 26, 46, 0.95);
+        padding: 20px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+    
+    .control-section {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: var(--border-radius);
+        padding: 15px;
+        margin-bottom: 15px;
+    }
+    
+    .section-title {
+        color: var(--text-light);
+        font-size: 1.1rem;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .emergency-button {
+        background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+        color: white;
+        border: none;
+        padding: 12px 20px;
+        border-radius: var(--border-radius);
+        font-size: 1rem;
+        font-weight: bold;
+        cursor: pointer;
+        transition: var(--transition);
+        width: 100%;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+    }
+    
+    .emergency-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(255, 77, 109, 0.3);
+    }
+    
+    .emergency-button.secondary {
+        background: rgba(255, 255, 255, 0.1);
+    }
+    
+    .emergency-description {
+        width: 100%;
+        padding: 10px;
+        margin-top: 10px;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: var(--border-radius);
+        color: var(--text-color);
+        resize: vertical;
+        min-height: 60px;
+    }
+    
+    .emergency-timer {
+        color: var(--primary-color);
+        font-size: 1.1rem;
+        text-align: center;
+        margin-top: 10px;
+        font-weight: bold;
+    }
+    
+    .medical-form {
+        display: none;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 15px;
+        border-radius: var(--border-radius);
+        margin-top: 10px;
+    }
+    
+    .medical-form input,
+    .medical-form textarea {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 10px;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: var(--border-radius);
+        color: var(--text-color);
+    }
+    
+    .emergency-contacts {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .contact-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 10px;
+        border-radius: var(--border-radius);
+    }
+    
+    .contact-item button {
+        background: none;
+        border: none;
+        color: var(--text-light);
+        cursor: pointer;
+        padding: 5px;
+    }
+    
+    .contact-item button:hover {
+        color: var(--primary-color);
+    }
+    
+    .hospital-list {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+    
+    .hospital-item {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 10px;
+        margin-bottom: 8px;
+        border-radius: var(--border-radius);
+        cursor: pointer;
+        transition: var(--transition);
+    }
+    
+    .hospital-item:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+    
+    .location-request {
+        position: absolute;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(26, 26, 46, 0.95);
+        padding: 15px 25px;
+        border-radius: var(--border-radius);
+        z-index: 1000;
+        text-align: center;
+    }
+    
+    .location-request button {
+        background: var(--primary-color);
+        color: white;
+        border: none;
+        padding: 8px 20px;
+        border-radius: var(--border-radius);
+        margin-top: 10px;
+        cursor: pointer;
+    }
+    
+    .medical-records-list {
+        margin-top: 10px;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+    
+    .medical-record-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 10px;
+        margin-bottom: 8px;
+        border-radius: var(--border-radius);
+    }
+    
+    .record-info {
+        flex: 1;
+    }
+    
+    .record-actions {
+        display: flex;
+        gap: 8px;
+    }
+    
+    .record-actions button {
+        background: none;
+        border: none;
+        color: var(--text-light);
+        cursor: pointer;
+        padding: 5px;
+    }
+    
+    .record-actions button:hover {
+        color: var(--primary-color);
+    }
+    
+    .hospital-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 5px;
+    }
+    
+    .hospital-details {
+        font-size: 0.9em;
+        color: var(--text-light);
+        margin-bottom: 10px;
+    }
+    
+    .hospital-details i {
+        width: 20px;
+        text-align: center;
+        margin-right: 5px;
+    }
+    
+    .select-hospital-btn {
+        background: var(--primary-color);
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        border-radius: var(--border-radius);
+        cursor: pointer;
+        font-size: 0.9em;
+    }
+    
+    .hospital-item.selected {
+        border: 2px solid var(--primary-color);
+    }
+    
+    .directions-panel {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    
+    .direction-step {
+        display: flex;
+        align-items: center;
+        padding: 5px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .step-number {
+        background: var(--primary-color);
+        color: white;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 10px;
+    }
+    
+    .step-instruction {
+        flex: 1;
+    }
+    
+    .step-distance {
+        color: var(--text-light);
+        font-size: 0.9em;
+    }
+
+    .modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+    }
+
+    .modal-content {
+        background: var(--bg-color);
+        padding: 20px;
+        border-radius: var(--border-radius);
+        width: 90%;
+        max-width: 500px;
+    }
+
+    .contact-form {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .contact-form input {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: var(--border-radius);
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--text-color);
+    }
+
+    .contact-form-buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+    }
+
+    .file-upload-container {
+        position: relative;
+        margin: 10px 0;
+    }
+
+    .file-upload-input {
+        display: none;
+    }
+
+    .file-upload-label {
+        display: block;
+        padding: 10px;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px dashed rgba(255, 255, 255, 0.2);
+        border-radius: var(--border-radius);
+        text-align: center;
+        cursor: pointer;
+        transition: var(--transition);
+    }
+
+    .file-upload-label:hover {
+        background: rgba(255, 255, 255, 0.15);
+    }
+
+    .file-info {
+        margin-top: 5px;
+        font-size: 0.9em;
+        color: var(--text-light);
+    }
+
+    .ecg-analysis-section {
+        margin-top: 15px;
+    }
+
+    .ecg-analysis-section h4 {
+        margin-bottom: 10px;
+        color: var(--text-light);
+    }
+
+    .analysis-result {
+        margin-top: 15px;
+        padding: 10px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: var(--border-radius);
+        display: none;
+    }
+
+    .analysis-result.show {
+        display: block;
+    }
+
+    .analysis-result h5 {
+        color: var(--text-light);
+        margin-bottom: 10px;
+    }
+
+    .analysis-result pre {
+        background: rgba(0, 0, 0, 0.2);
+        padding: 10px;
+        border-radius: var(--border-radius);
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div id="emergencyMap"></div>
+    
+    <div class="control-panel">
+        <div class="control-section">
+            <div class="section-title">
+                <i class="fas fa-map-marker-alt"></i> Location
+            </div>
+            <div id="currentLocation">Requesting location...</div>
+            <button id="startJourney" class="emergency-button secondary" disabled>
+                <i class="fas fa-route"></i> Start Journey to Nearest Hospital
+            </button>
+        </div>
+        
+        <div class="control-section">
+            <div class="section-title">
+                <i class="fas fa-hospital"></i> Nearby Hospitals
+            </div>
+            <div class="hospital-list" id="hospitalList">
+                Loading nearby hospitals...
+            </div>
+        </div>
+        
+        <div class="control-section">
+            <div class="section-title">
+                <i class="fas fa-phone-alt"></i> Emergency Contacts
+            </div>
+            <div class="emergency-contacts" id="emergencyContacts">
+                <button class="emergency-button secondary" id="addContact">
+                    <i class="fas fa-plus"></i> Add Emergency Contact
+                </button>
+            </div>
+        </div>
+        
+        <div class="control-section">
+            <div class="section-title">
+                <i class="fas fa-file-medical"></i> Medical Records
+            </div>
+            <div class="file-upload-container">
+                <label class="file-upload-label" for="medicalRecordUpload">
+                    <i class="fas fa-upload"></i> Upload Medical Records
+                    <div class="file-info">Supported formats: CSV, TXT, JSON, PDF</div>
+                </label>
+                <input type="file" id="medicalRecordUpload" class="file-upload-input" accept=".csv,.txt,.json,.pdf">
+            </div>
+            <div class="medical-records-list" id="medicalRecordsList">
+                <!-- Medical records will be displayed here -->
+            </div>
+            <button class="emergency-button secondary" id="editMedicalInfo">
+                <i class="fas fa-edit"></i> View Medical Information
+            </button>
+            <div class="medical-form" id="medicalForm">
+                <input type="text" placeholder="Current Medications" id="currentMedications">
+                <textarea placeholder="Allergies" id="allergies"></textarea>
+                <button class="emergency-button" id="saveMedicalInfo">Save Information</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="location-request" id="locationRequest">
+    <div>This app needs your location to provide emergency services</div>
+    <button id="allowLocation">Allow Location Access</button>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+<script>
+    // Make functions globally available
+    window.selectHospital = function(index) {
+        selectedHospital = nearbyHospitals[index];
+        if (selectedHospital) {
+            // Update the start journey button
+            const startJourneyBtn = document.getElementById('startJourney');
+            startJourneyBtn.innerHTML = `<i class="fas fa-route"></i> Start Journey to ${selectedHospital.name}`;
+            startJourneyBtn.disabled = false;
+            
+            // Highlight selected hospital
+            document.querySelectorAll('.hospital-item').forEach((item, i) => {
+                item.classList.toggle('selected', i === index);
+            });
+            
+            // Center map on selected hospital
+            map.setView([selectedHospital.lat, selectedHospital.lon], 15);
+        }
+    };
+
+    window.startJourneyToHospital = function(index) {
+        const hospital = nearbyHospitals[index];
+        if (hospital && userLocation) {
+            // Clear existing route
+            if (currentRoute) {
+                map.removeLayer(currentRoute);
+            }
+            
+            // Get detailed route with turn-by-turn directions
+            fetch(`https://router.project-osrm.org/route/v1/driving/${userLocation.lng},${userLocation.lat};${hospital.lon},${hospital.lat}?overview=full&geometries=geojson&steps=true`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.routes && data.routes[0]) {
+                        const route = data.routes[0];
+                        currentRoute = L.geoJSON(route.geometry, {
+                            style: {
+                                color: '#4CAF50',
+                                weight: 5,
+                                opacity: 0.7
+                            }
+                        }).addTo(map);
+                        
+                        // Fit map to show the entire route
+                        map.fitBounds(currentRoute.getBounds());
+                        
+                        // Show turn-by-turn directions
+                        const steps = route.legs[0].steps;
+                        let directions = `
+                            <div class="directions-panel">
+                                <h3>Directions to ${hospital.name}</h3>
+                                <div class="directions-list">
+                                    ${steps.map((step, index) => `
+                                        <div class="direction-step">
+                                            <span class="step-number">${index + 1}</span>
+                                            <span class="step-instruction">${step.maneuver.instruction}</span>
+                                            <span class="step-distance">${Math.round(step.distance)}m</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Create a popup with directions
+                        L.popup({maxWidth: 300})
+                            .setLatLng([hospital.lat, hospital.lon])
+                            .setContent(directions)
+                            .openOn(map);
+                    }
+                });
+        }
+    };
+</script>
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+    import { getDatabase, ref, onValue, set, update, remove, push, get } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
+
+    // Initialize Firebase
+    const firebaseConfig = {
+        apiKey: "AIzaSyBDr1xcrLxfemIRTydmgjTcG6mHgx919Rs",
+        authDomain: "help-6661c.firebaseapp.com",
+        projectId: "help-6661c",
+        storageBucket: "help-6661c.firebasestorage.app",
+        messagingSenderId: "2944311795",
+        appId: "1:2944311795:web:61d2b982c75a446df7f286",
+        measurementId: "G-H8RJ7C4Z3K",
+        databaseURL: "https://help-6661c-default-rtdb.firebaseio.com"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth();
+    const database = getDatabase();
+
+    // Check authentication status and load data
+    onAuthStateChanged(auth, async (user) => {
+        if (user) {
+            console.log('User is signed in:', user.uid);
+            loadUserData(user.uid);
+        } else {
+            console.log('No user is signed in');
+            // Redirect to login if not authenticated
+            window.location.href = '/login';
+        }
+    });
+
+    async function loadUserData(userId) {
+        try {
+            // Load emergency contacts
+            const contactsRef = ref(database, `users/${userId}/emergency_contacts`);
+            onValue(contactsRef, (snapshot) => {
+                const contacts = snapshot.val();
+                const contactsDiv = document.getElementById('emergencyContacts');
+                
+                // Clear existing contacts except the add button
+                const addButton = document.getElementById('addContact');
+                contactsDiv.innerHTML = '';
+                contactsDiv.appendChild(addButton);
+                
+                if (contacts) {
+                    Object.entries(contacts).forEach(([id, contact]) => {
+                        const contactElement = document.createElement('div');
+                        contactElement.className = 'contact-item';
+                        contactElement.dataset.contactId = id;
+                        contactElement.innerHTML = `
+                            <div class="contact-info">
+                                <div class="contact-name">${contact.name}</div>
+                                <div class="contact-phone">${contact.phone}</div>
+                            </div>
+                            <div class="contact-actions">
+                                <button onclick="callContact('${contact.phone}')" title="Call"><i class="fas fa-phone"></i></button>
+                                <button onclick="removeContact('${id}')" title="Remove"><i class="fas fa-trash"></i></button>
+                            </div>
+                        `;
+                        contactsDiv.insertBefore(contactElement, addButton);
+                    });
+                }
+            });
+
+            // Load medical information
+            const medicalInfoRef = ref(database, `users/${userId}/medical_info`);
+            onValue(medicalInfoRef, (snapshot) => {
+                const medicalInfo = snapshot.val();
+                if (medicalInfo) {
+                    document.getElementById('currentMedications').value = medicalInfo.medications || '';
+                    document.getElementById('allergies').value = medicalInfo.allergies || '';
+                }
+            });
+
+            // Load medical records
+            const recordsRef = ref(database, `users/${userId}/medical_records`);
+            onValue(recordsRef, (snapshot) => {
+                const records = snapshot.val();
+                const recordsList = document.getElementById('medicalRecordsList');
+                recordsList.innerHTML = '';
+                
+                if (records) {
+                    Object.entries(records).forEach(([id, record]) => {
+                        const recordElement = document.createElement('div');
+                        recordElement.className = 'record-item';
+                        recordElement.dataset.recordId = id;
+                        recordElement.innerHTML = `
+                            <div class="record-info">
+                                <div class="record-name">${record.name}</div>
+                                <div class="record-date">${new Date(record.uploaded_at).toLocaleDateString()}</div>
+                            </div>
+                            <div class="record-actions">
+                                <button onclick="viewRecord('${id}')" title="View"><i class="fas fa-eye"></i></button>
+                                <button onclick="downloadRecord('${id}')" title="Download"><i class="fas fa-download"></i></button>
+                                <button onclick="removeRecord('${id}')" title="Remove"><i class="fas fa-trash"></i></button>
+                            </div>
+                        `;
+                        recordsList.appendChild(recordElement);
+                    });
+                }
+            });
+        } catch (error) {
+            console.error('Error loading user data:', error);
+        }
+    }
+
+    function addEmergencyContact(name, phone) {
+        const user = auth.currentUser;
+        if (!user) {
+            alert('You must be logged in to add contacts');
+            return;
+        }
+
+        // Save to Firebase
+        const contactsRef = ref(database, `users/${user.uid}/emergency_contacts`);
+        const newContactRef = push(contactsRef);
+        
+        set(newContactRef, {
+            name: name,
+            phone: phone,
+            added_at: new Date().toISOString()
+        })
+        .then(() => {
+            // Remove the modal
+            document.querySelector('.modal').remove();
+        })
+        .catch(error => {
+            console.error('Error saving contact:', error);
+            alert('Error saving contact. Please try again.');
+        });
+    }
+
+    function removeContact(contactId) {
+        if (confirm('Are you sure you want to remove this contact?')) {
+            const user = auth.currentUser;
+            if (user) {
+                const contactRef = ref(database, `users/${user.uid}/emergency_contacts/${contactId}`);
+                remove(contactRef)
+                    .then(() => {
+                        // Remove from UI
+                        const contactElement = document.querySelector(`.contact-item[data-contact-id="${contactId}"]`);
+                        if (contactElement) {
+                            contactElement.remove();
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error removing contact:', error);
+                        alert('Error removing contact. Please try again.');
+                    });
+            }
+        }
+    }
+
+    // Make functions globally available
+    window.addEmergencyContact = addEmergencyContact;
+    window.removeContact = removeContact;
+    window.callContact = function(phone) {
+        if (phone) {
+            window.location.href = `tel:${phone}`;
+        }
+    };
+    window.viewRecord = viewRecord;
+    window.removeRecord = removeRecord;
+    window.downloadRecord = downloadRecord;
+
+    // Make showContactForm globally available
+    window.showContactForm = function() {
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content">
+                <h3>Add Emergency Contact</h3>
+                <div class="contact-form">
+                    <input type="text" id="contactName" placeholder="Enter contact name" required>
+                    <input type="tel" id="contactPhone" placeholder="Enter contact phone number" required>
+                    <div class="contact-form-buttons">
+                        <button class="emergency-button secondary" onclick="this.closest('.modal').remove()">Cancel</button>
+                        <button class="emergency-button" id="saveContactBtn">Save Contact</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        
+        // Add event listener to the save button
+        document.getElementById('saveContactBtn').addEventListener('click', function() {
+            const name = document.getElementById('contactName').value;
+            const phone = document.getElementById('contactPhone').value;
+            
+            if (name && phone) {
+                addEmergencyContact(name, phone);
+                document.querySelector('.modal').remove();
+            } else {
+                alert('Please fill in all fields');
+            }
+        });
+    };
+
+    // Initialize contact form handling
+    document.addEventListener('DOMContentLoaded', function() {
+        const addContactBtn = document.getElementById('addContact');
+        if (addContactBtn) {
+            addContactBtn.addEventListener('click', window.showContactForm);
+        }
+    });
+
+    // Initialize the map
+    window.map = L.map('emergencyMap').setView([0, 0], 15);
+    
+    // Create the street map layer
+    const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    });
+
+    // Create the satellite layer
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '&copy; <a href="https://www.esri.com/">Esri</a>'
+    });
+
+    // Add the street layer by default
+    streetLayer.addTo(window.map);
+
+    // Add layer control to switch between street and satellite views
+    const baseMaps = {
+        "Street Map": streetLayer,
+        "Satellite": satelliteLayer
+    };
+    L.control.layers(baseMaps).addTo(window.map);
+
+    let isVolunteer = false;
+    let emergencyTimeout = null;
+    let currentEmergency = null;
+    window.userLocation = null;
+    window.nearbyHospitals = [];
+    window.currentRoute = null;
+    window.selectedHospital = null;
+
+    // Socket.io connection
+    const socket = io();
+
+    socket.on('connect', () => {
+        console.log('Connected to server');
+    });
+
+    socket.on('emergency_alert', (data) => {
+        if (isVolunteer) {
+            showEmergencyAlert(data);
+        }
+    });
+
+    // Location handling
+    document.getElementById('allowLocation').addEventListener('click', () => {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    window.userLocation = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude
+                    };
+                    window.map.setView([window.userLocation.lat, window.userLocation.lng], 15);
+                    document.getElementById('locationRequest').style.display = 'none';
+                    updateCurrentLocation();
+                    findNearbyHospitals();
+                },
+                (error) => {
+                    console.error('Error getting location:', error);
+                    alert('Please enable location access to use emergency features');
+                }
+            );
+        }
+    });
+
+    function updateCurrentLocation() {
+        if (window.userLocation) {
+            document.getElementById('currentLocation').textContent = 
+                `Current Location: ${window.userLocation.lat.toFixed(4)}, ${window.userLocation.lng.toFixed(4)}`;
+            document.getElementById('startJourney').disabled = false;
+        }
+    }
+
+    async function findNearbyHospitals() {
+        try {
+            const response = await fetch(`/api/nearby_hospitals?lat=${window.userLocation.lat}&lon=${window.userLocation.lng}`);
+            const data = await response.json();
+            
+            if (data.hospitals) {
+                window.nearbyHospitals = data.hospitals;
+                displayHospitals(data.hospitals);
+                
+                // Add markers for each hospital
+                data.hospitals.forEach((hospital, index) => {
+                    L.marker([hospital.lat, hospital.lon], {
+                        icon: L.divIcon({
+                            className: 'hospital-marker',
+                            html: '<i class="fas fa-hospital" style="color: #4CAF50; font-size: 20px;"></i>'
+                        })
+                    })
+                    .bindPopup(`<b>${hospital.name}</b><br>${hospital.address}<br>Distance: ${(hospital.distance).toFixed(0)}m`)
+                    .addTo(window.map);
+                });
+            }
+        } catch (error) {
+            console.error('Error finding hospitals:', error);
+        }
+    }
+
+    function displayHospitals(hospitals) {
+        const hospitalList = document.getElementById('hospitalList');
+        hospitalList.innerHTML = hospitals.map((hospital, index) => `
+            <div class="hospital-item" onclick="selectHospital(${index})">
+                <div class="hospital-header">
+                    <strong>${hospital.name}</strong>
+                    <span class="distance">${(hospital.distance).toFixed(0)}m</span>
+                </div>
+                <div class="hospital-details">
+                    <div>${hospital.address}</div>
+                    ${hospital.phone ? `<div><i class="fas fa-phone"></i> ${hospital.phone}</div>` : ''}
+                    ${hospital.website ? `<div><i class="fas fa-globe"></i> <a href="${hospital.website}" target="_blank">Website</a></div>` : ''}
+                </div>
+                <button class="select-hospital-btn" onclick="event.stopPropagation(); startJourneyToHospital(${index})">
+                    <i class="fas fa-route"></i> Start Journey
+                </button>
+            </div>
+        `).join('');
+    }
+
+    // Update the start journey button click handler
+    document.getElementById('startJourney').addEventListener('click', function() {
+        if (window.nearbyHospitals.length > 0) {
+            // If no specific hospital is selected, use the first (nearest) hospital
+            const hospitalIndex = window.selectedHospital ? 
+                window.nearbyHospitals.findIndex(h => h.name === window.selectedHospital.name) : 0;
+            window.startJourneyToHospital(hospitalIndex);
+        }
+    });
+
+    // Medical records handling
+    document.getElementById('medicalRecordUpload').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            if (file.type === 'text/csv' || 
+                file.type === 'text/plain' || 
+                file.type === 'application/json' || 
+                file.type === 'application/pdf') {
+                uploadMedicalRecord(file);
+            } else {
+                alert('Please upload a CSV, TXT, JSON, or PDF file');
+            }
+        }
+    });
+
+    document.getElementById('editMedicalInfo').addEventListener('click', () => {
+        const form = document.getElementById('medicalForm');
+        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    });
+
+    document.getElementById('saveMedicalInfo').addEventListener('click', () => {
+        const medications = document.getElementById('currentMedications').value;
+        const allergies = document.getElementById('allergies').value;
+        saveMedicalInfo(medications, allergies);
+    });
+
+    async function saveMedicalInfo(medications, allergies) {
+        try {
+            const user = auth.currentUser;
+            if (user) {
+                const medicalInfoRef = ref(database, `users/${user.uid}/medical_info`);
+                await set(medicalInfoRef, {
+                    medications: medications,
+                    allergies: allergies,
+                    updated_at: new Date().toISOString()
+                });
+                alert('Medical information saved successfully');
+                document.getElementById('medicalForm').style.display = 'none';
+            } else {
+                alert('You must be logged in to save medical information');
+            }
+        } catch (error) {
+            console.error('Error saving medical info:', error);
+            alert('Error saving medical information. Please try again.');
+        }
+    }
+
+    async function uploadMedicalRecord(file) {
+        try {
+            const user = auth.currentUser;
+            if (!user) {
+                alert('You must be logged in to upload medical records');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const recordsRef = ref(database, `users/${user.uid}/medical_records`);
+                const newRecordRef = push(recordsRef);
+                
+                let content;
+                if (file.type === 'application/pdf') {
+                    // For PDF files, store the base64 encoded content
+                    content = e.target.result;
+                } else {
+                    // For text files, store the text content
+                    content = e.target.result;
+                }
+                
+                await set(newRecordRef, {
+                    name: file.name,
+                    content: content,
+                    type: file.type,
+                    uploaded_at: new Date().toISOString()
+                });
+                
+                alert('Medical record uploaded successfully');
+            };
+
+            if (file.type === 'application/pdf') {
+                // Read PDF files as base64 encoded data
+                reader.readAsDataURL(file);
+            } else {
+                // Read other files as text
+                reader.readAsText(file);
+            }
+        } catch (error) {
+            console.error('Error uploading record:', error);
+            alert('Error uploading medical record. Please try again.');
+        }
+    }
+
+    async function viewRecord(recordId) {
+        try {
+            const user = auth.currentUser;
+            if (user) {
+                const recordRef = ref(database, `users/${user.uid}/medical_records/${recordId}`);
+                const snapshot = await get(recordRef);
+                const record = snapshot.val();
+                
+                if (record) {
+                    const modal = document.createElement('div');
+                    modal.className = 'modal';
+                    
+                    let content;
+                    if (record.type === 'application/pdf') {
+                        content = `
+                            <iframe 
+                                src="${record.content}" 
+                                width="100%" 
+                                height="500px" 
+                                style="border: none;">
+                            </iframe>
+                        `;
+                    } else {
+                        content = `<pre>${record.content}</pre>`;
+                    }
+                    
+                    modal.innerHTML = `
+                        <div class="modal-content">
+                            <h3>${record.name}</h3>
+                            <div class="record-content">
+                                ${content}
+                            </div>
+                            <div class="modal-buttons">
+                                <button class="emergency-button" onclick="this.closest('.modal').remove()">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    document.body.appendChild(modal);
+                }
+            }
+        } catch (error) {
+            console.error('Error viewing record:', error);
+            alert('Error viewing record. Please try again.');
+        }
+    }
+
+    async function removeRecord(recordId) {
+        if (confirm('Are you sure you want to remove this record?')) {
+            try {
+                const user = auth.currentUser;
+                if (user) {
+                    const recordRef = ref(database, `users/${user.uid}/medical_records/${recordId}`);
+                    await remove(recordRef);
+                    alert('Record removed successfully');
+                }
+            } catch (error) {
+                console.error('Error removing record:', error);
+                alert('Error removing record. Please try again.');
+            }
+        }
+    }
+
+    async function downloadRecord(recordId) {
+        try {
+            const user = auth.currentUser;
+            if (user) {
+                const recordRef = ref(database, `users/${user.uid}/medical_records/${recordId}`);
+                const snapshot = await get(recordRef);
+                const record = snapshot.val();
+                
+                if (record) {
+                    // Create a blob from the content
+                    const blob = new Blob([record.content], { type: record.type || 'text/plain' });
+                    
+                    // Create a download link
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = record.name;
+                    
+                    // Trigger the download
+                    document.body.appendChild(a);
+                    a.click();
+                    
+                    // Clean up
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }
+            }
+        } catch (error) {
+            console.error('Error downloading record:', error);
+            alert('Error downloading record. Please try again.');
+        }
+    }
+
+    // ECG data handling
+    document.getElementById('ecgDataUpload').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            if (file.type !== 'application/json' && !file.name.endsWith('.json')) {
+                alert('Please upload a JSON file');
+                e.target.value = '';
+                return;
+            }
+            uploadECGData(file);
+        }
+    });
+
+    async function uploadECGData(file) {
+        try {
+            const user = auth.currentUser;
+            if (user) {
+                const timestamp = new Date().toISOString();
+                const recordRef = ref(database, `users/${user.uid}/ecg_data/${timestamp}`);
+                
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    try {
+                        // Validate JSON format
+                        const content = e.target.result;
+                        const jsonData = JSON.parse(content);
+                        
+                        // Store the data
+                        await set(recordRef, {
+                            filename: file.name,
+                            type: 'application/json',
+                            content: jsonData,
+                            uploaded_at: timestamp
+                        });
+
+                        // Show analysis result
+                        const resultDiv = document.getElementById('ecgAnalysisResult');
+                        resultDiv.innerHTML = `
+                            <h5>ECG Analysis Result</h5>
+                            <pre>${JSON.stringify(analyzeECGData(jsonData), null, 2)}</pre>
+                        `;
+                        resultDiv.classList.add('show');
+                        
+                        alert('ECG data uploaded and analyzed successfully');
+                    } catch (error) {
+                        console.error('Error parsing JSON:', error);
+                        alert('Invalid JSON format. Please upload a valid JSON file.');
+                    }
+                };
+                reader.readAsText(file);
+            }
+        } catch (error) {
+            console.error('Error uploading ECG data:', error);
+            alert('Error uploading ECG data');
+        }
+    }
+
+    function analyzeECGData(data) {
+        // This is a placeholder for actual ECG analysis
+        // You would implement your ECG analysis logic here
+        return {
+            status: 'success',
+            timestamp: new Date().toISOString(),
+            analysis: {
+                heartRate: calculateHeartRate(data),
+                anomalies: detectAnomalies(data),
+                recommendations: generateRecommendations(data)
+            }
+        };
+    }
+
+    function calculateHeartRate(data) {
+        // Placeholder for heart rate calculation
+        return '60-100 BPM (Normal)';
+    }
+
+    function detectAnomalies(data) {
+        // Placeholder for anomaly detection
+        return ['No significant anomalies detected'];
+    }
+
+    function generateRecommendations(data) {
+        // Placeholder for recommendations
+        return ['Continue regular monitoring'];
+    }
+
+    // Emergency button functionality
+    document.getElementById('triggerEmergency').addEventListener('click', async function() {
+        if (!window.userLocation) {
+            alert('Please enable location access first');
+            return;
+        }
+        
+        const description = document.getElementById('emergencyDescription').value;
+        
+        try {
+            // Call all emergency contacts
+            const contacts = document.querySelectorAll('.contact-item');
+            contacts.forEach(contact => {
+                const phone = contact.querySelector('.contact-phone').textContent;
+                callContact(phone, description);
+            });
+            
+            // Send emergency alert to server
+            const response = await fetch('/api/emergency', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    lat: window.userLocation.lat,
+                    lng: window.userLocation.lng,
+                    description: description
+                })
+            });
+            
+            const result = await response.json();
+            if (result.status === 'success') {
+                currentEmergency = result.emergency_id;
+                startEmergencyTimer();
+                showEmergencyMarker(window.userLocation.lat, window.userLocation.lng);
+            }
+        } catch (error) {
+            console.error('Error sending emergency alert:', error);
+        }
+    });
+
+    function startEmergencyTimer() {
+        let timeLeft = 300; // 5 minutes in seconds
+        const timerElement = document.getElementById('emergencyTimer');
+        
+        if (emergencyTimeout) {
+            clearInterval(emergencyTimeout);
+        }
+        
+        emergencyTimeout = setInterval(() => {
+            timeLeft--;
+            const minutes = Math.floor(timeLeft / 60);
+            const seconds = timeLeft % 60;
+            timerElement.textContent = `Calling emergency services in: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+            
+            if (timeLeft <= 0) {
+                clearInterval(emergencyTimeout);
+                callEmergencyServices();
+            }
+        }, 1000);
+    }
+
+    function callEmergencyServices() {
+        alert('Emergency services have been notified!');
+        document.getElementById('emergencyTimer').textContent = 'Emergency services notified';
+    }
+
+    function showEmergencyMarker(lat, lng) {
+        // Clear existing markers
+        window.map.eachLayer((layer) => {
+            if (layer instanceof L.Marker) {
+                window.map.removeLayer(layer);
+            }
+        });
+        
+        // Add emergency marker
+        L.marker([lat, lng], {
+            icon: L.divIcon({
+                className: 'emergency-marker',
+                html: '<i class="fas fa-exclamation-triangle" style="color: red; font-size: 24px;"></i>'
+            })
+        }).addTo(window.map);
+    }
+</script>
+{% endblock %} 
