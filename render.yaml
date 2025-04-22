@@ -2,7 +2,7 @@ services:
   - type: web
     name: coeur
     env: python
-    buildCommand: python -m pip install --upgrade pip && pip install protobuf==3.20.* && pip install -r requirements.txt && pip install gdown pyrebase4 gunicorn && python download_models.py
+    buildCommand: python -m pip install --upgrade pip && pip install protobuf==3.20.* && pip install -r requirements.txt && pip install gdown pyrebase4 gunicorn reportlab && python download_models.py
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
