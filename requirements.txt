@@ -44,8 +44,8 @@ tqdm>=4.65.0
 numba>=0.56.0
 firebase-admin==6.7.0
 requests==2.29.0
-gcloud==0.18.3
-python-jwt==4.0.0
+gcloud==0.17.0
+python-jwt==2.0.1
 pycryptodome==3.4.3
 pyrebase==3.0.27
 python-socketio==5.12.1
