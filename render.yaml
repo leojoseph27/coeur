@@ -12,7 +12,7 @@ services:
       ls -la heart/models/ &&
       ls -la ecg\ project/ &&
       ls -la archive/
-    startCommand: python -m gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2 --threads 2 --worker-class=eventlet
+    startCommand: python -m gunicorn app:app --bind 0.0.0.0:$PORT --timeout 240 --workers 1 --threads 4 --worker-class=eventlet --preload
     envVars:
       - key: PYTHON_VERSION
         value: 3.8.10
@@ -30,3 +30,9 @@ services:
         value: "true"
       - key: TF_CPP_MIN_LOG_LEVEL
         value: "2"
+      - key: GUNICORN_CMD_ARGS
+        value: "--log-level=debug"
+      - key: PYTHONPATH
+        value: "/opt/render/project/src"
+      - key: MAX_CONTENT_LENGTH
+        value: "16777216"
