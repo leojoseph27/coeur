@@ -12,7 +12,7 @@ services:
       ls -la heart/models/ &&
       ls -la ecg\ project/ &&
       ls -la archive/
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2 --threads 2 --worker-class=eventlet
+    startCommand: python -m gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2 --threads 2 --worker-class=eventlet
     envVars:
       - key: PYTHON_VERSION
         value: 3.8.10
