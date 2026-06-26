@@ -1531,251 +1531,299 @@ def emergency_map():
 @app.route('/api/generate_analysis', methods=['POST'])
 @login_required
 def generate_analysis():
+    """Generate a professional medical analysis report.
+
+    Returns structured JSON data (not pre-formatted HTML) so the frontend
+    can render it into the professional report layout with cards, tables,
+    badges, and color-coded risk indicators.
+    """
+    import re as _re
+    import uuid as _uuid
+    from html import escape as _html_escape
+
     try:
-        data = request.get_json()
-        
-        # Extract the content from HTML results
+        data = request.get_json(silent=True) or {}
+
+        # ---- Extract test results ----
         def extract_text(html_content):
             if not html_content:
                 return None
-            # Remove HTML tags and decode HTML entities
-            import re
+            text = _re.sub(r'<[^>]+>', ' ', html_content)
             from html import unescape
-            text = re.sub(r'<[^>]+>', ' ', html_content)
             text = unescape(text)
             return text.strip()
 
-        # Get available test results
         heart_disease = extract_text(data.get('heartDisease', ''))
         ecg = extract_text(data.get('ecg', ''))
         heart_sound = extract_text(data.get('heartSound', ''))
-        
-        # Get heart disease risk parameters
         heart_params = data.get('heartParams', {})
-        heart_params_text = ""
+
+        # ---- Build evidence table from heart parameters ----
+        cp_map = {'0': 'Asymptomatic', '1': 'Typical Angina', '2': 'Atypical Angina',
+                  '3': 'Non-anginal Pain', '4': 'Asymptomatic'}
+        restecg_map = {'0': 'Normal', '1': 'ST-T Wave Abnormality', '2': 'Left Ventricular Hypertrophy'}
+        slope_map = {'0': 'Upsloping', '1': 'Flat', '2': 'Downsloping'}
+        thal_map = {'0': 'Normal', '1': 'Fixed Defect', '2': 'Reversible Defect', '3': 'Other'}
+
+        def _risk_status(val, low_threshold, high_threshold, reverse=False):
+            """Return 'green', 'yellow', or 'red' based on value vs thresholds."""
+            try:
+                v = float(val)
+                if reverse:
+                    if v <= low_threshold: return 'red'
+                    if v >= high_threshold: return 'green'
+                    return 'yellow'
+                else:
+                    if v <= low_threshold: return 'green'
+                    if v >= high_threshold: return 'red'
+                    return 'yellow'
+            except (ValueError, TypeError):
+                return 'green'
+
+        evidence_table = []
+        key_findings = []
         if heart_params:
-            # Map parameter values to human-readable format
-            cp_map = {
-                '1': 'Typical Angina',
-                '2': 'Atypical Angina',
-                '3': 'Non-anginal Pain',
-                '4': 'Asymptomatic'
-            }
-            
-            restecg_map = {
-                '0': 'Normal',
-                '1': 'ST-T Wave Abnormality',
-                '2': 'Left Ventricular Hypertrophy'
-            }
-            
-            slope_map = {
-                '0': 'Upsloping',
-                '1': 'Flat',
-                '2': 'Downsloping'
-            }
-            
-            thal_map = {
-                '0': 'Normal',
-                '1': 'Fixed Defect',
-                '2': 'Reversible Defect',
-                '3': 'Other'
-            }
-            
-            heart_params_text = """
-            Heart Disease Risk Assessment Parameters:
-            - Age: {age} years
-            - Sex: {sex}
-            - Chest Pain Type: {cp}
-            - Resting Blood Pressure: {trestbps} mmHg
-            - Serum Cholesterol: {chol} mg/dl
-            - Fasting Blood Sugar: {fbs}
-            - Resting ECG Results: {restecg}
-            - Maximum Heart Rate Achieved: {thalach} bpm
-            - Exercise Induced Angina: {exang}
-            - ST Depression Induced by Exercise: {oldpeak} mm
-            - Slope of Peak Exercise ST Segment: {slope}
-            - Number of Major Vessels: {ca}
-            - Thalassemia: {thal}
-            """.format(
-                age=heart_params.get('age', 'N/A'),
-                sex='Male' if heart_params.get('sex') == '1' else 'Female',
-                cp=cp_map.get(heart_params.get('cp', ''), 'N/A'),
-                trestbps=heart_params.get('trestbps', 'N/A'),
-                chol=heart_params.get('chol', 'N/A'),
-                fbs='> 120 mg/dl' if heart_params.get('fbs') == '1' else '<= 120 mg/dl',
-                restecg=restecg_map.get(heart_params.get('restecg', ''), 'N/A'),
-                thalach=heart_params.get('thalach', 'N/A'),
-                exang='Yes' if heart_params.get('exang') == '1' else 'No',
-                oldpeak=heart_params.get('oldpeak', 'N/A'),
-                slope=slope_map.get(heart_params.get('slope', ''), 'N/A'),
-                ca=heart_params.get('ca', 'N/A'),
-                thal=thal_map.get(heart_params.get('thal', ''), 'N/A')
-            )
+            age = heart_params.get('age', '')
+            sex = heart_params.get('sex', '')
+            cp = heart_params.get('cp', '')
+            trestbps = heart_params.get('trestbps', '')
+            chol = heart_params.get('chol', '')
+            fbs = heart_params.get('fbs', '')
+            restecg = heart_params.get('restecg', '')
+            thalach = heart_params.get('thalach', '')
+            exang = heart_params.get('exang', '')
+            oldpeak = heart_params.get('oldpeak', '')
+            slope = heart_params.get('slope', '')
+            ca = heart_params.get('ca', '')
+            thal = heart_params.get('thal', '')
 
-        # Prepare the prompt for Gemini
-        test_results = []
+            # Age
+            age_status = _risk_status(age, 45, 55)
+            evidence_table.append({'finding': 'Age', 'value': f"{age} years", 'status': age_status,
+                                   'meaning': 'Elevated risk increases with age >55', 'risk': 'High' if age_status == 'red' else ('Moderate' if age_status == 'yellow' else 'Low')})
+            # Chest Pain
+            cp_status = 'red' if cp in ('1', '4') else ('yellow' if cp == '2' else 'green')
+            evidence_table.append({'finding': 'Chest Pain Type', 'value': cp_map.get(cp, 'N/A'), 'status': cp_status,
+                                   'meaning': 'Typical angina is a strong predictor of CAD', 'risk': 'High' if cp_status == 'red' else ('Moderate' if cp_status == 'yellow' else 'Low')})
+            # Blood Pressure
+            bp_status = _risk_status(trestbps, 120, 140)
+            evidence_table.append({'finding': 'Resting Blood Pressure', 'value': f"{trestbps} mmHg", 'status': bp_status,
+                                   'meaning': 'Hypertension >140 mmHg increases cardiac workload', 'risk': 'High' if bp_status == 'red' else ('Moderate' if bp_status == 'yellow' else 'Low')})
+            # Cholesterol
+            chol_status = _risk_status(chol, 200, 240)
+            evidence_table.append({'finding': 'Serum Cholesterol', 'value': f"{chol} mg/dL", 'status': chol_status,
+                                   'meaning': 'Elevated cholesterol accelerates atherosclerosis', 'risk': 'High' if chol_status == 'red' else ('Moderate' if chol_status == 'yellow' else 'Low')})
+            # Fasting Blood Sugar
+            fbs_status = 'red' if fbs == '1' else 'green'
+            evidence_table.append({'finding': 'Fasting Blood Sugar', 'value': '>120 mg/dL' if fbs == '1' else '<=120 mg/dL', 'status': fbs_status,
+                                   'meaning': 'Elevated FBS may indicate diabetes, a major CV risk', 'risk': 'High' if fbs_status == 'red' else 'Low'})
+            # Resting ECG
+            ecg_status = 'red' if restecg == '2' else ('yellow' if restecg == '1' else 'green')
+            evidence_table.append({'finding': 'Resting ECG', 'value': restecg_map.get(restecg, 'N/A'), 'status': ecg_status,
+                                   'meaning': 'LVH and ST-T abnormalities indicate cardiac strain', 'risk': 'High' if ecg_status == 'red' else ('Moderate' if ecg_status == 'yellow' else 'Low')})
+            # Max Heart Rate
+            hr_status = _risk_status(thalach, 150, 120, reverse=True)  # lower = worse
+            evidence_table.append({'finding': 'Max Heart Rate', 'value': f"{thalach} bpm", 'status': hr_status,
+                                   'meaning': 'Reduced exercise capacity suggests cardiac limitation', 'risk': 'High' if hr_status == 'red' else ('Moderate' if hr_status == 'yellow' else 'Low')})
+            # Exercise Angina
+            exang_status = 'red' if exang == '1' else 'green'
+            evidence_table.append({'finding': 'Exercise-Induced Angina', 'value': 'Yes' if exang == '1' else 'No', 'status': exang_status,
+                                   'meaning': 'Angina during exercise strongly suggests ischemia', 'risk': 'High' if exang_status == 'red' else 'Low'})
+            # ST Depression
+            oldpeak_status = _risk_status(oldpeak, 1.0, 2.0)
+            evidence_table.append({'finding': 'ST Depression', 'value': f"{oldpeak} mm", 'status': oldpeak_status,
+                                   'meaning': 'ST depression >2mm indicates significant ischemia', 'risk': 'High' if oldpeak_status == 'red' else ('Moderate' if oldpeak_status == 'yellow' else 'Low')})
+            # Major Vessels
+            ca_status = 'red' if str(ca) in ('2', '3') else ('yellow' if str(ca) == '1' else 'green')
+            evidence_table.append({'finding': 'Major Vessels (ca)', 'value': str(ca), 'status': ca_status,
+                                   'meaning': 'More vessels with stenosis = higher risk', 'risk': 'High' if ca_status == 'red' else ('Moderate' if ca_status == 'yellow' else 'Low')})
+            # Thalassemia
+            thal_status = 'red' if str(thal) in ('2', '3') else ('yellow' if str(thal) == '1' else 'green')
+            evidence_table.append({'finding': 'Thalassemia', 'value': thal_map.get(thal, 'N/A'), 'status': thal_status,
+                                   'meaning': 'Reversible defect indicates ischemic heart disease', 'risk': 'High' if thal_status == 'red' else ('Moderate' if thal_status == 'yellow' else 'Low')})
+
+            # Build key findings cards (only red/yellow items)
+            for ev in evidence_table:
+                if ev['status'] in ('red', 'yellow'):
+                    key_findings.append(ev)
+
+        # ---- Determine overall risk ----
+        heart_pred_text = heart_disease or ''
+        is_high_risk = 'high risk' in heart_pred_text.lower()
+        is_low_risk = 'low risk' in heart_pred_text.lower()
+        risk_level = 'High Risk' if is_high_risk else ('Low Risk' if is_low_risk else 'Moderate Risk')
+        risk_color = 'red' if is_high_risk else ('green' if is_low_risk else 'yellow')
+
+        # Extract probability from heart disease text
+        prob_match = _re.search(r'(\d+\.?\d*)\s*%', heart_pred_text)
+        probability = float(prob_match.group(1)) if prob_match else None
+
+        # ---- Build the Gemini prompt for AI interpretation ----
+        test_results_str = []
         if heart_disease:
-            test_results.append(f"Heart Disease Risk Assessment Results:\n{heart_disease}\n\n{heart_params_text}")
+            test_results_str.append(f"Heart Disease Risk Assessment:\n{heart_disease}")
+            if heart_params:
+                test_results_str.append(f"Parameters: Age={heart_params.get('age')}, Sex={'M' if heart_params.get('sex')=='1' else 'F'}, "
+                    f"CP={cp_map.get(heart_params.get('cp',''),'?')}, BP={heart_params.get('trestbps')}, "
+                    f"Chol={heart_params.get('chol')}, FBS={heart_params.get('fbs')}, "
+                    f"ECG={restecg_map.get(heart_params.get('restecg',''),'?')}, "
+                    f"MaxHR={heart_params.get('thalach')}, ExAng={heart_params.get('exang')}, "
+                    f"Oldpeak={heart_params.get('oldpeak')}, Slope={slope_map.get(heart_params.get('slope',''),'?')}, "
+                    f"Ca={heart_params.get('ca')}, Thal={thal_map.get(heart_params.get('thal',''),'?')}")
         if ecg:
-            test_results.append(f"ECG Analysis Results:\n{ecg}")
+            test_results_str.append(f"ECG Analysis:\n{ecg}")
         if heart_sound:
-            test_results.append(f"Heart Sound Analysis Results:\n{heart_sound}")
+            test_results_str.append(f"Heart Sound Analysis:\n{heart_sound}")
 
-        prompt = f"""You are a board-certified cardiologist writing a professional medical analysis report for a patient. Based on the following test results, provide a comprehensive, detailed medical report.
+        prompt = f"""You are a board-certified cardiologist. Analyze these test results and provide a structured medical report. Use hedged language ("may suggest", "could indicate", "is associated with"). Never state unconfirmed diagnoses as facts.
 
-PATIENT TEST RESULTS:
-{chr(10).join(test_results)}
+TEST RESULTS:
+{chr(10).join(test_results_str)}
 
-Write your report using these EXACT section headers (each on its own line, preceded by "##"):
+Respond with EXACTLY these sections, each preceded by ## (do not add any other text):
 
-## Summary of Findings
-Write 3-5 paragraphs summarizing the key findings from each test result. Explain what each result means in clinical terms. If heart disease risk parameters are provided, analyze each parameter and its contribution to the overall risk. Be specific about the probability percentage and what it indicates.
+## AI Interpretation
+Write 3-5 concise paragraphs interpreting the results. Distinguish between confirmed findings from the data and possible explanations. Use phrases like "may suggest", "could indicate", "warrants further evaluation".
 
-## Potential Health Concerns
-Identify each health concern found in the results. For each concern, explain: what it is, why it matters, severity (mild/moderate/severe), and clinical implications. Consider the interaction between multiple findings.
+## Possible Conditions
+List 2-4 possible conditions suggested by the findings. For each: condition name, brief explanation, and why it appears relevant. Format as: "Condition: explanation (relevance)"
 
-## Recommendations for Follow-up
-Provide specific, actionable recommendations: what additional tests to consider, which specialists to consult (e.g., cardiologist, electrophysiologist), recommended follow-up timeline, and what to monitor.
+## Follow-up Recommendations
+Provide recommendations in three categories:
+IMMEDIATE: [actions to take now]
+WITHIN 1 WEEK: [consultations and tests to schedule]
+ROUTINE: [ongoing monitoring and lifestyle changes]
 
 ## Lifestyle Suggestions
-Give detailed, personalized lifestyle recommendations based on the specific findings. Include dietary guidance, exercise recommendations (with specific intensity/duration), stress management, and habits to adopt or avoid.
+Provide 4-6 specific, personalized lifestyle recommendations based on the actual findings. Include diet, exercise, stress, sleep.
 
-## When to Seek Immediate Medical Attention
-List specific warning signs and red-flag symptoms that require emergency care. Be clear about what symptoms should prompt calling emergency services versus scheduling a routine appointment.
+## Emergency Warning Signs
+List 5-6 specific warning signs that require immediate emergency care. Base these on the patient's specific risk profile."""
 
-IMPORTANT FORMATTING RULES:
-- Use the exact section headers above (## Header Name)
-- Write in clear, professional paragraphs
-- Be detailed and specific — do not give generic advice
-- Do not include disclaimers about being an AI
-- Base all recommendations on the actual test results provided"""
-
-        # Use the official google-genai SDK with higher token limit for detailed report
+        # ---- Call Gemini ----
+        ai_sections = {
+            'interpretation': '', 'possible_conditions': '', 'followup': '',
+            'lifestyle': '', 'emergency': ''
+        }
+        gemini_failed = False
         try:
             client = _get_gemini_client()
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
                 config=genai_types.GenerateContentConfig(
-                    temperature=0.4,
-                    top_p=0.9,
-                    top_k=40,
-                    max_output_tokens=4096,
+                    temperature=0.4, top_p=0.9, top_k=40, max_output_tokens=4096,
                 ),
             )
             analysis_text = (response.text or "").strip()
             if not analysis_text:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'AI analysis returned empty response. Please try again.'
-                }), 500
-            logger.info(f"[generate_analysis] Gemini response length: {len(analysis_text)} chars")
+                logger.warning("[generate_analysis] Gemini returned empty, using fallbacks")
+                gemini_failed = True
+            else:
+                logger.info(f"[generate_analysis] Gemini response: {len(analysis_text)} chars")
         except Exception as gemini_err:
-            logger.error(f"[generate_analysis] Gemini call failed: {str(gemini_err)[:200]}")
-            return jsonify({
-                'status': 'error',
-                'message': f'AI analysis unavailable: {str(gemini_err)[:100]}'
-            }), 500
+            logger.error(f"[generate_analysis] Gemini failed: {str(gemini_err)[:200]}")
+            analysis_text = ''
+            gemini_failed = True
 
-        # Parse sections from the response using ## headers (robust parsing)
-        import re as _re
-        sections = {
-            'summary': '',
-            'concerns': '',
-            'recommendations': '',
-            'lifestyle': '',
-            'emergency': ''
-        }
+        # ---- Parse AI sections (or use fallbacks if Gemini failed) ----
 
-        section_map = {
-            'summary': [r'##\s*Summary of Findings', r'##\s*Potential Health Concerns'],
-            'concerns': [r'##\s*Potential Health Concerns', r'##\s*Recommendations for Follow-up'],
-            'recommendations': [r'##\s*Recommendations for Follow-up', r'##\s*Lifestyle Suggestions'],
-            'lifestyle': [r'##\s*Lifestyle Suggestions', r'##\s*When to Seek Immediate Medical Attention'],
-            'emergency': [r'##\s*When to Seek Immediate Medical Attention', None],
-        }
+        # ---- Parse AI sections ----
+        def _strip_markdown(text):
+            """Remove markdown symbols while preserving text content."""
+            # Remove ## headers (keep the text)
+            text = _re.sub(r'^#{1,6}\s*', '', text, flags=_re.MULTILINE)
+            # Remove bold/italic markers
+            text = _re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', text)
+            text = _re.sub(r'_{1,2}([^_]+)_{1,2}', r'\1', text)
+            # Remove inline code
+            text = _re.sub(r'`([^`]+)`', r'\1', text)
+            # Remove list markers (-, *, •) at start of lines
+            text = _re.sub(r'^[\s]*[-*•]\s*', '', text, flags=_re.MULTILINE)
+            # Remove numbered list markers
+            text = _re.sub(r'^[\s]*\d+\.\s*', '', text, flags=_re.MULTILINE)
+            # Remove code fences
+            text = _re.sub(r'```[a-z]*\n?', '', text)
+            text = _re.sub(r'```', '', text)
+            return text.strip()
 
-        for key, (start_pattern, end_pattern) in section_map.items():
+        def _extract_section(text, start_pattern, end_pattern=None):
             try:
-                start_match = _re.search(start_pattern, analysis_text, _re.IGNORECASE)
-                if start_match:
-                    start_pos = start_match.end()
-                    if end_pattern:
-                        end_match = _re.search(end_pattern, analysis_text[start_pos:], _re.IGNORECASE)
-                        if end_match:
-                            sections[key] = analysis_text[start_pos:start_pos + end_match.start()].strip()
-                        else:
-                            sections[key] = analysis_text[start_pos:].strip()
-                    else:
-                        sections[key] = analysis_text[start_pos:].strip()
-                else:
-                    sections[key] = ''
+                start_match = _re.search(start_pattern, text, _re.IGNORECASE)
+                if not start_match:
+                    return ''
+                start_pos = start_match.end()
+                if end_pattern:
+                    end_match = _re.search(end_pattern, text[start_pos:], _re.IGNORECASE)
+                    if end_match:
+                        return _strip_markdown(text[start_pos:start_pos + end_match.start()].strip())
+                return _strip_markdown(text[start_pos:].strip())
             except Exception:
-                sections[key] = ''
+                return ''
 
-        # Fallback: if all sections are empty, use the raw text as the summary
-        if not any(sections.values()):
-            sections['summary'] = analysis_text
-            logger.warning("[generate_analysis] Section parsing failed, using raw text as summary")
+        ai_sections = {
+            'interpretation': _extract_section(analysis_text, r'##\s*AI Interpretation', r'##\s*Possible Conditions'),
+            'possible_conditions': _extract_section(analysis_text, r'##\s*Possible Conditions', r'##\s*Follow-up Recommendations'),
+            'followup': _extract_section(analysis_text, r'##\s*Follow-up Recommendations', r'##\s*Lifestyle Suggestions'),
+            'lifestyle': _extract_section(analysis_text, r'##\s*Lifestyle Suggestions', r'##\s*Emergency Warning Signs'),
+            'emergency': _extract_section(analysis_text, r'##\s*Emergency Warning Signs'),
+        }
 
-        # Escape HTML special characters in the section content
-        from html import escape as _html_escape
-        for key in sections:
-            if sections[key]:
-                # Preserve line breaks by converting them to <br> tags
-                escaped = _html_escape(sections[key])
-                sections[key] = escaped.replace('\n', '<br>\n')
+        # Fallback: if parsing fails, use raw text
+        if not any(ai_sections.values()):
+            ai_sections['interpretation'] = _strip_markdown(analysis_text)
+            logger.warning("[generate_analysis] Section parsing failed, using raw text")
 
-        logger.info(f"[generate_analysis] Sections parsed: " +
-                     ", ".join(f"{k}={len(v)}chars" for k, v in sections.items()))
+        # HTML-escape and convert line breaks
+        for key in ai_sections:
+            if ai_sections[key]:
+                escaped = _html_escape(ai_sections[key])
+                ai_sections[key] = escaped.replace('\n', '<br>\n')
 
-        # Format the response with proper HTML structure
-        formatted_response = f"""
-        <div class="analysis-section">
-            <div class="report-header">
-                <h3>Medical Analysis Report</h3>
-                <p class="report-date">{datetime.now().strftime('%B %d, %Y')}</p>
-            </div>
-            <div class="report-section">
-                <h4>Summary of Findings</h4>
-                <div class="report-content">{sections['summary'] or 'No data available.'}</div>
-            </div>
-            <div class="report-section">
-                <h4>Potential Health Concerns</h4>
-                <div class="report-content">{sections['concerns'] or 'No data available.'}</div>
-            </div>
-            <div class="report-section">
-                <h4>Recommendations for Follow-up</h4>
-                <div class="report-content">{sections['recommendations'] or 'No data available.'}</div>
-            </div>
-            <div class="report-section">
-                <h4>Lifestyle Suggestions</h4>
-                <div class="report-content">{sections['lifestyle'] or 'No data available.'}</div>
-            </div>
-            <div class="report-section">
-                <h4>When to Seek Immediate Medical Attention</h4>
-                <div class="report-content">{sections['emergency'] or 'No data available.'}</div>
-            </div>
-        </div>
-        """
+        logger.info(f"[generate_analysis] AI sections: " +
+                     ", ".join(f"{k}={len(v)}ch" for k, v in ai_sections.items()))
 
-        # Store the analysis data in the session
+        # ---- Build report data ----
+        report_id = f"CAR-{_uuid.uuid4().hex[:8].upper()}"
+        report_data = {
+            'status': 'success',
+            'report_id': report_id,
+            'generated_at': datetime.now().strftime('%B %d, %Y at %H:%M'),
+            'ai_available': not gemini_failed,
+            'patient_info': {
+                'age': heart_params.get('age', 'N/A'),
+                'gender': 'Male' if heart_params.get('sex') == '1' else 'Female',
+                'analysis_types': [t for t, v in [('Heart Disease', heart_disease), ('ECG', ecg), ('Heart Sound', heart_sound)] if v],
+            },
+            'overall_assessment': {
+                'risk_level': risk_level,
+                'risk_color': risk_color,
+                'probability': probability,
+                'model': 'Random Forest Classifier (500 trees)',
+            },
+            'key_findings': key_findings if key_findings else [],
+            'evidence_table': evidence_table if evidence_table else [],
+            'ai_interpretation': ai_sections['interpretation'] or 'Analysis based on the entered parameters is provided below.',
+            'possible_conditions': ai_sections['possible_conditions'] or 'No specific conditions could be identified from the available data.',
+            'followup': ai_sections['followup'] or 'Please consult a healthcare professional for personalized follow-up recommendations.',
+            'lifestyle': ai_sections['lifestyle'] or 'Maintain a heart-healthy lifestyle including balanced diet, regular exercise, and stress management.',
+            'emergency': ai_sections['emergency'] or 'Seek immediate medical attention if you experience chest pain, severe shortness of breath, fainting, or pain radiating to jaw, neck, or arm.',
+            'disclaimer': 'This report is generated by an AI-assisted clinical decision support system. It is intended for educational and decision-support purposes only. It is not a definitive medical diagnosis and should not replace evaluation by a qualified healthcare professional.',
+            'ecg_result': ecg,
+            'heart_sound_result': heart_sound,
+        }
+
+        # Store in session for PDF export
         session['latest_analysis'] = {
-            'analysis': formatted_response,
+            'report_data': report_data,
             'timestamp': datetime.now().isoformat()
         }
 
-        return jsonify({
-            'status': 'success',
-            'analysis': formatted_response
-        })
-        
+        return jsonify(report_data)
+
     except Exception as e:
         logger.error(f"Error in generate_analysis: {str(e)}", exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # Create reports directory if it doesn't exist (absolute path for portability)
 REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
