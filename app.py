@@ -643,30 +643,159 @@ def analyze_ecg_endpoint():
 @app.route('/analyze_audio', methods=['POST'])
 @login_required
 def analyze_audio():
+    """Heart sound analysis endpoint with full instrumentation.
+
+    Logs every stage (started/completed/time) and returns structured JSON
+    errors with stage info instead of crashing or returning HTML.
+    """
+    import time as _time
+    import traceback as _tb
+    t0 = _time.time()
+
+    def _log_stage(stage, start_t):
+        elapsed = _time.time() - start_t
+        logger.info(f"[analyze_audio] {stage} completed in {elapsed:.3f}s")
+
     try:
-        # Lazily load audio and YAMNet models
-        load_audio_models()
+        # ---- Stage 1: Request received ----
+        logger.info(f"[analyze_audio] Stage 1: Request received from user_id={session.get('user_id')}")
+
+        # ---- Stage 2: File validation ----
+        t1 = _time.time()
         if 'audio' not in request.files:
-            return jsonify({'error': 'No audio file provided'}), 400
-            
+            logger.error("[analyze_audio] Stage 2 FAILED: no 'audio' field in request.files")
+            return jsonify({'success': False, 'stage': 'File Validation', 'error': 'No audio file provided'}), 400
+
         audio_file = request.files['audio']
         if audio_file.filename == '':
-            return jsonify({'error': 'No selected file'}), 400
-            
+            return jsonify({'success': False, 'stage': 'File Validation', 'error': 'No selected file'}), 400
+
         if not audio_file.filename.endswith('.wav'):
-            return jsonify({'error': 'Please upload a WAV file'}), 400
+            return jsonify({'success': False, 'stage': 'File Validation', 'error': 'Please upload a WAV file (.wav extension required)'}), 400
 
-        import librosa
-        import numpy as np
-        y, sr = librosa.load(audio_file, sr=16000)
-        y = y.astype(np.float32)
-        y = librosa.util.normalize(y)
+        # Log file details
+        audio_file.stream.seek(0, 2)  # seek to end
+        file_size = audio_file.stream.tell()
+        audio_file.stream.seek(0)  # reset
+        logger.info(f"[analyze_audio] Stage 2: File validated. filename={audio_file.filename}, "
+                     f"size={file_size} bytes, content_type={audio_file.content_type}")
+        _log_stage("Stage 2 (File Validation)", t1)
 
-        embeddings = extract_embeddings(y)
-        predictions = audio_model.predict(embeddings, verbose=0)
-        predicted_class = np.argmax(predictions[0])
-        confidence = float(predictions[0][predicted_class])
-        
+        # ---- Stage 3: Model loading ----
+        t2 = _time.time()
+        audio_model_path = os.path.join(BASE_DIR, 'heart/models/audio_model.h5')
+        yamnet_pb_path = os.path.join(BASE_DIR, 'archive/saved_model.pb')
+
+        if not os.path.exists(audio_model_path):
+            logger.error(f"[analyze_audio] Stage 3 FAILED: audio_model.h5 not found at {audio_model_path}")
+            return jsonify({
+                'success': False, 'stage': 'Model Loading',
+                'error': f'Audio model file not found: {audio_model_path}'
+            }), 500
+
+        logger.info(f"[analyze_audio] Stage 3: audio_model.h5 exists ({os.path.getsize(audio_model_path)} bytes), "
+                     f"saved_model.pb exists={os.path.exists(yamnet_pb_path)}")
+
+        global audio_model, yamnet_model
+        try:
+            if audio_model is None or yamnet_model is None:
+                logger.info("[analyze_audio] Stage 3: Loading TensorFlow + audio models (first time, may take 10-20s)...")
+                load_audio_models()
+                if audio_model is None:
+                    return jsonify({'success': False, 'stage': 'Model Loading', 'error': 'Audio model failed to load'}), 500
+                if yamnet_model is None:
+                    return jsonify({'success': False, 'stage': 'Model Loading', 'error': 'YAMNet model failed to load'}), 500
+                logger.info(f"[analyze_audio] Stage 3: Models loaded. audio_model={type(audio_model).__name__}, "
+                             f"yamnet_model={type(yamnet_model).__name__}")
+            else:
+                logger.info("[analyze_audio] Stage 3: Models already loaded (cached)")
+        except Exception as me:
+            logger.error(f"[analyze_audio] Stage 3 FAILED: model load error:\n{_tb.format_exc()}")
+            return jsonify({
+                'success': False, 'stage': 'Model Loading',
+                'error': f'Failed to load audio models: {str(me)[:200]}',
+                'traceback': _tb.format_exc() if DEBUG_MODE else None
+            }), 500
+        _log_stage("Stage 3 (Model Loading)", t2)
+
+        # ---- Stage 4: Audio loading (librosa) ----
+        t3 = _time.time()
+        try:
+            import librosa
+            import numpy as np
+            # Save to a temporary file (librosa.load works better with file paths than file objects)
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+                audio_file.save(tmp.name)
+                tmp_path = tmp.name
+            logger.info(f"[analyze_audio] Stage 4: Saved temp file to {tmp_path}")
+
+            y, sr = librosa.load(tmp_path, sr=16000)
+            os.unlink(tmp_path)  # clean up temp file
+            y = y.astype(np.float32)
+            y = librosa.util.normalize(y)
+
+            duration = len(y) / sr if sr > 0 else 0
+            logger.info(f"[analyze_audio] Stage 4: Audio loaded. samples={len(y)}, sr={sr}, "
+                         f"duration={duration:.2f}s, dtype={y.dtype}, "
+                         f"has_nan={np.isnan(y).any()}, has_inf={np.isinf(y).any()}")
+
+            if len(y) == 0:
+                return jsonify({'success': False, 'stage': 'Audio Loading', 'error': 'Audio file is empty or could not be decoded'}), 400
+            if np.isnan(y).any() or np.isinf(y).any():
+                return jsonify({'success': False, 'stage': 'Audio Loading', 'error': 'Audio contains NaN or Inf values'}), 400
+        except Exception as ae:
+            logger.error(f"[analyze_audio] Stage 4 FAILED:\n{_tb.format_exc()}")
+            # Clean up temp file if it exists
+            try:
+                if 'tmp_path' in dir() and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except Exception:
+                pass
+            return jsonify({
+                'success': False, 'stage': 'Audio Loading',
+                'error': f'Failed to load audio: {str(ae)[:200]}'
+            }), 500
+        _log_stage("Stage 4 (Audio Loading)", t3)
+
+        # ---- Stage 5: Feature extraction (YAMNet embeddings) ----
+        t4 = _time.time()
+        try:
+            embeddings = extract_embeddings(y)
+            logger.info(f"[analyze_audio] Stage 5: Embeddings extracted. shape={embeddings.shape}, "
+                         f"dtype={embeddings.dtype}")
+            if np.isnan(embeddings).any() or np.isinf(embeddings).any():
+                return jsonify({'success': False, 'stage': 'Feature Extraction',
+                                'error': 'Embeddings contain NaN or Inf values'}), 500
+        except Exception as fe:
+            logger.error(f"[analyze_audio] Stage 5 FAILED:\n{_tb.format_exc()}")
+            return jsonify({
+                'success': False, 'stage': 'Feature Extraction',
+                'error': f'Failed to extract features: {str(fe)[:200]}',
+                'traceback': _tb.format_exc() if DEBUG_MODE else None
+            }), 500
+        _log_stage("Stage 5 (Feature Extraction)", t4)
+
+        # ---- Stage 6: Prediction ----
+        t5 = _time.time()
+        try:
+            predictions = audio_model.predict(embeddings, verbose=0)
+            predicted_class = int(np.argmax(predictions[0]))
+            confidence = float(predictions[0][predicted_class])
+
+            logger.info(f"[analyze_audio] Stage 6: Prediction complete. "
+                         f"raw_predictions={predictions[0]}, predicted_class={predicted_class}, "
+                         f"confidence={confidence:.4f}")
+        except Exception as pe:
+            logger.error(f"[analyze_audio] Stage 6 FAILED:\n{_tb.format_exc()}")
+            return jsonify({
+                'success': False, 'stage': 'Prediction',
+                'error': f'Failed to predict: {str(pe)[:200]}',
+                'traceback': _tb.format_exc() if DEBUG_MODE else None
+            }), 500
+        _log_stage("Stage 6 (Prediction)", t5)
+
+        # ---- Stage 7: Response ----
         disease_map = {
             0: 'Aortic Stenosis',
             1: 'Mitral Regurgitation',
@@ -674,17 +803,26 @@ def analyze_audio():
             3: 'Mitral Valve Prolapse',
             4: 'Normal'
         }
-        
         disease_name = disease_map.get(predicted_class, 'Unknown')
-        
-        return jsonify({
-            'prediction': int(predicted_class),
+
+        result = {
+            'success': True,
+            'prediction': predicted_class,
             'disease': disease_name,
             'confidence': round(confidence * 100, 2)
-        })
+        }
+        logger.info(f"[analyze_audio] Stage 7: Returning response: {result}")
+        _log_stage("Stage 7 (Response)", t0)
+        return jsonify(result)
+
     except Exception as e:
-        logger.error(f"Error in audio analysis: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"[analyze_audio] UNHANDLED EXCEPTION:\n{_tb.format_exc()}")
+        return jsonify({
+            'success': False,
+            'stage': 'Unhandled',
+            'error': str(e),
+            'traceback': _tb.format_exc() if DEBUG_MODE else None
+        }), 500
 
 @app.route('/profile')
 @login_required

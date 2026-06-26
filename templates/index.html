@@ -1669,10 +1669,48 @@
                     body: formData
                 });
 
+                // Check response.ok BEFORE parsing JSON — a 502/500 from
+                // gunicorn returns HTML (not JSON), so response.json() would
+                // throw "Unexpected end of JSON input".
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    loading.style.display = 'none';
+                    resultBox.style.display = 'block';
+                    let errMsg = `Server error (HTTP ${response.status})`;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.error) errMsg = errorJson.error;
+                        if (errorJson.stage) errMsg = `[${errorJson.stage}] ${errMsg}`;
+                    } catch (e) {
+                        errMsg = `Server error (HTTP ${response.status}). The model may still be loading — please try again in a moment.`;
+                    }
+                    document.getElementById('soundPrediction').textContent = 'Analysis unavailable.';
+                    document.getElementById('soundConfidence').textContent = `Error: ${errMsg}`;
+                    const heartSoundResultsBox = document.getElementById('heartSoundResults');
+                    if (heartSoundResultsBox) {
+                        heartSoundResultsBox.innerHTML =
+                            `<div class="alert alert-danger"><strong>Analysis unavailable.</strong><br>${errMsg}</div>`;
+                    }
+                    return;
+                }
+
                 const result = await response.json();
 
                 loading.style.display = 'none';
                 resultBox.style.display = 'block';
+
+                // Check for error in 200 response
+                if (result.error || result.disease === undefined) {
+                    const errMsg = result.error || 'Unexpected response format';
+                    document.getElementById('soundPrediction').textContent = 'Analysis unavailable.';
+                    document.getElementById('soundConfidence').textContent = `Error: ${errMsg}`;
+                    const heartSoundResultsBox = document.getElementById('heartSoundResults');
+                    if (heartSoundResultsBox) {
+                        heartSoundResultsBox.innerHTML =
+                            `<div class="alert alert-danger"><strong>Analysis unavailable.</strong><br>${errMsg}</div>`;
+                    }
+                    return;
+                }
 
                 document.getElementById('soundPrediction').textContent =
                     `Detected Condition: ${result.disease}`;
