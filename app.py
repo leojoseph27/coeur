@@ -1483,58 +1483,46 @@ def generate_analysis():
         if heart_sound:
             test_results.append(f"Heart Sound Analysis Results:\n{heart_sound}")
 
-        prompt = """As a medical AI assistant, please analyze the following test results and provide a professional medical report.
-Only analyze the test results that are provided below. Do not mention or speculate about missing tests.
+        prompt = f"""You are a board-certified cardiologist writing a professional medical analysis report for a patient. Based on the following test results, provide a comprehensive, detailed medical report.
 
-{test_results}
+PATIENT TEST RESULTS:
+{chr(10).join(test_results)}
 
-Please provide a professional medical report in the following format:
+Write your report using these EXACT section headers (each on its own line, preceded by "##"):
 
-1. Summary of Findings:
-Provide a clear and concise overview of the available test results.
-Focus on the key findings and their clinical significance.
-Include analysis of the heart disease risk parameters if available.
+## Summary of Findings
+Write 3-5 paragraphs summarizing the key findings from each test result. Explain what each result means in clinical terms. If heart disease risk parameters are provided, analyze each parameter and its contribution to the overall risk. Be specific about the probability percentage and what it indicates.
 
-2. Potential Health Concerns:
-List any identified health concerns based on the available test results.
-Rate the severity of each concern (mild, moderate, or severe).
-Explain the clinical implications of each finding.
-Consider the heart disease risk parameters in your assessment.
+## Potential Health Concerns
+Identify each health concern found in the results. For each concern, explain: what it is, why it matters, severity (mild/moderate/severe), and clinical implications. Consider the interaction between multiple findings.
 
-3. Recommendations for Follow-up:
-Suggest specific medical tests or consultations based on the findings.
-Recommend appropriate follow-up intervals.
-List relevant specialists for consultation if needed.
-Base recommendations on both test results and risk parameters.
+## Recommendations for Follow-up
+Provide specific, actionable recommendations: what additional tests to consider, which specialists to consult (e.g., cardiologist, electrophysiologist), recommended follow-up timeline, and what to monitor.
 
-4. Lifestyle Suggestions:
-Provide specific lifestyle modifications based on the findings.
-Include dietary recommendations if relevant.
-Suggest appropriate exercise routines if applicable.
-List habits to adopt or avoid based on the test results and risk parameters.
+## Lifestyle Suggestions
+Give detailed, personalized lifestyle recommendations based on the specific findings. Include dietary guidance, exercise recommendations (with specific intensity/duration), stress management, and habits to adopt or avoid.
 
-5. When to Seek Immediate Medical Attention:
-List specific symptoms or changes that require urgent care.
-Provide clear guidelines for emergency situations.
-Include warning signs to watch for based on the test results and risk parameters.
+## When to Seek Immediate Medical Attention
+List specific warning signs and red-flag symptoms that require emergency care. Be clear about what symptoms should prompt calling emergency services versus scheduling a routine appointment.
 
-Format the response in clear, professional medical language.
-Avoid using markdown symbols (*, **) or bullet points.
-Write in a formal, clinical tone appropriate for a medical report.""".format(test_results='\n\n'.join(test_results))
+IMPORTANT FORMATTING RULES:
+- Use the exact section headers above (## Header Name)
+- Write in clear, professional paragraphs
+- Be detailed and specific — do not give generic advice
+- Do not include disclaimers about being an AI
+- Base all recommendations on the actual test results provided"""
 
-        # Use the official google-genai SDK (same as /ai_doctor) with a timeout.
-        # The old code used a raw REST call to generativelanguage.googleapis.com
-        # with no timeout, which caused gunicorn worker timeouts (502) on Render.
+        # Use the official google-genai SDK with higher token limit for detailed report
         try:
             client = _get_gemini_client()
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
                 config=genai_types.GenerateContentConfig(
-                    temperature=0.7,
-                    top_p=0.95,
+                    temperature=0.4,
+                    top_p=0.9,
                     top_k=40,
-                    max_output_tokens=1024,
+                    max_output_tokens=4096,
                 ),
             )
             analysis_text = (response.text or "").strip()
@@ -1543,13 +1531,16 @@ Write in a formal, clinical tone appropriate for a medical report.""".format(tes
                     'status': 'error',
                     'message': 'AI analysis returned empty response. Please try again.'
                 }), 500
+            logger.info(f"[generate_analysis] Gemini response length: {len(analysis_text)} chars")
         except Exception as gemini_err:
             logger.error(f"[generate_analysis] Gemini call failed: {str(gemini_err)[:200]}")
             return jsonify({
                 'status': 'error',
                 'message': f'AI analysis unavailable: {str(gemini_err)[:100]}'
             }), 500
-        # Split the analysis text into sections
+
+        # Parse sections from the response using ## headers (robust parsing)
+        import re as _re
         sections = {
             'summary': '',
             'concerns': '',
@@ -1558,19 +1549,47 @@ Write in a formal, clinical tone appropriate for a medical report.""".format(tes
             'emergency': ''
         }
 
-        def extract_section(text, start_marker, end_marker=None):
-            try:
-                if end_marker:
-                    return text.split(start_marker)[1].split(end_marker)[0].strip()
-                return text.split(start_marker)[1].strip()
-            except IndexError:
-                return "No information available"
+        section_map = {
+            'summary': [r'##\s*Summary of Findings', r'##\s*Potential Health Concerns'],
+            'concerns': [r'##\s*Potential Health Concerns', r'##\s*Recommendations for Follow-up'],
+            'recommendations': [r'##\s*Recommendations for Follow-up', r'##\s*Lifestyle Suggestions'],
+            'lifestyle': [r'##\s*Lifestyle Suggestions', r'##\s*When to Seek Immediate Medical Attention'],
+            'emergency': [r'##\s*When to Seek Immediate Medical Attention', None],
+        }
 
-        sections['summary'] = extract_section(analysis_text, '1. Summary of Findings:', '2. Potential Health Concerns:')
-        sections['concerns'] = extract_section(analysis_text, '2. Potential Health Concerns:', '3. Recommendations for Follow-up:')
-        sections['recommendations'] = extract_section(analysis_text, '3. Recommendations for Follow-up:', '4. Lifestyle Suggestions:')
-        sections['lifestyle'] = extract_section(analysis_text, '4. Lifestyle Suggestions:', '5. When to Seek Immediate Medical Attention:')
-        sections['emergency'] = extract_section(analysis_text, '5. When to Seek Immediate Medical Attention:')
+        for key, (start_pattern, end_pattern) in section_map.items():
+            try:
+                start_match = _re.search(start_pattern, analysis_text, _re.IGNORECASE)
+                if start_match:
+                    start_pos = start_match.end()
+                    if end_pattern:
+                        end_match = _re.search(end_pattern, analysis_text[start_pos:], _re.IGNORECASE)
+                        if end_match:
+                            sections[key] = analysis_text[start_pos:start_pos + end_match.start()].strip()
+                        else:
+                            sections[key] = analysis_text[start_pos:].strip()
+                    else:
+                        sections[key] = analysis_text[start_pos:].strip()
+                else:
+                    sections[key] = ''
+            except Exception:
+                sections[key] = ''
+
+        # Fallback: if all sections are empty, use the raw text as the summary
+        if not any(sections.values()):
+            sections['summary'] = analysis_text
+            logger.warning("[generate_analysis] Section parsing failed, using raw text as summary")
+
+        # Escape HTML special characters in the section content
+        from html import escape as _html_escape
+        for key in sections:
+            if sections[key]:
+                # Preserve line breaks by converting them to <br> tags
+                escaped = _html_escape(sections[key])
+                sections[key] = escaped.replace('\n', '<br>\n')
+
+        logger.info(f"[generate_analysis] Sections parsed: " +
+                     ", ".join(f"{k}={len(v)}chars" for k, v in sections.items()))
 
         # Format the response with proper HTML structure
         formatted_response = f"""
@@ -1581,23 +1600,23 @@ Write in a formal, clinical tone appropriate for a medical report.""".format(tes
             </div>
             <div class="report-section">
                 <h4>Summary of Findings</h4>
-                <p>{sections['summary']}</p>
+                <div class="report-content">{sections['summary'] or 'No data available.'}</div>
             </div>
             <div class="report-section">
                 <h4>Potential Health Concerns</h4>
-                <p>{sections['concerns']}</p>
+                <div class="report-content">{sections['concerns'] or 'No data available.'}</div>
             </div>
             <div class="report-section">
                 <h4>Recommendations for Follow-up</h4>
-                <p>{sections['recommendations']}</p>
+                <div class="report-content">{sections['recommendations'] or 'No data available.'}</div>
             </div>
             <div class="report-section">
                 <h4>Lifestyle Suggestions</h4>
-                <p>{sections['lifestyle']}</p>
+                <div class="report-content">{sections['lifestyle'] or 'No data available.'}</div>
             </div>
             <div class="report-section">
                 <h4>When to Seek Immediate Medical Attention</h4>
-                <p>{sections['emergency']}</p>
+                <div class="report-content">{sections['emergency'] or 'No data available.'}</div>
             </div>
         </div>
         """
