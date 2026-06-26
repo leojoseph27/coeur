@@ -1,44 +1,39 @@
 import os
 
-# Force TensorFlow to use CPU only and avoid slow GPU/driver scans
+# Force TensorFlow to use CPU only and avoid slow GPU/driver scans.
+# Must be set BEFORE any TensorFlow import (which is now lazy).
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
 from flask_socketio import SocketIO
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-import joblib
-import librosa
-import tensorflow as tf
-import tensorflow_hub as hub
-import matplotlib
-matplotlib.use('Agg')  # Set the backend to Agg before importing pyplot
-import matplotlib.pyplot as plt
 import io
 import base64
-import os
 import logging
 from urllib.parse import quote as url_quote
 import json
-import torch
-from detecting_anomaly_in_ecg_data_using_autoencoder_with_pytorch import Autoencoder
 from datetime import datetime
 import math
 import requests
 import time
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
 from html import unescape
 import re
 import subprocess
 from dotenv import load_dotenv
 import db_neon
 from werkzeug.security import generate_password_hash
+
+# --- Lazy-loaded heavy ML libraries (imported inside functions) ---
+# These are NOT imported at module level to avoid loading TensorFlow (~500MB),
+# PyTorch (~400MB), librosa, matplotlib, etc. all at startup, which causes
+# OOM on Render's free tier (512MB RAM). Each library is imported only when
+# the feature that needs it is first used.
+#   pandas, numpy, sklearn, joblib  -> heart disease prediction
+#   torch, Autoencoder              -> ECG analysis
+#   tensorflow, tensorflow_hub      -> heart sound analysis
+#   librosa                         -> heart sound analysis (audio loading)
+#   matplotlib                      -> ECG plot generation
+#   reportlab                       -> PDF report generation
 
 # Configure logging first
 logging.basicConfig(
@@ -203,24 +198,30 @@ yamnet_model = None
 ecg_model = None
 
 def load_heart_and_ecg_models():
-    """Lazily load heart disease and ECG models to reduce startup time."""
+    """Lazily load heart disease and ECG models.
+
+    Heart disease model uses joblib/sklearn (lightweight, ~50MB RAM).
+    ECG model uses PyTorch (~400MB RAM) — only loaded if ECG analysis is used.
+    """
     global heart_model, heart_scaler, ecg_model
     try:
-        # Heart disease model
+        # Heart disease model (sklearn + joblib — lightweight)
+        import joblib
         heart_model_path = os.path.join(BASE_DIR, 'heart/models/heart_model.joblib')
         if heart_model is None and os.path.exists(heart_model_path):
             heart_model = joblib.load(heart_model_path)
             logger.info("Heart model loaded successfully")
 
-        # Heart scaler
         heart_scaler_path = os.path.join(BASE_DIR, 'heart/models/heart_scaler.joblib')
         if heart_scaler is None and os.path.exists(heart_scaler_path):
             heart_scaler = joblib.load(heart_scaler_path)
             logger.info("Heart scaler loaded successfully")
 
-        # ECG model (PyTorch autoencoder)
+        # ECG model (PyTorch autoencoder — heavy, ~400MB RAM)
         ecg_model_path = os.path.join(BASE_DIR, 'ecg project/best_model.pth')
         if ecg_model is None and os.path.exists(ecg_model_path):
+            import torch
+            from detecting_anomaly_in_ecg_data_using_autoencoder_with_pytorch import Autoencoder
             seq_len = 1
             n_features = 141
             model = Autoencoder(seq_len, n_features)
@@ -233,9 +234,15 @@ def load_heart_and_ecg_models():
         logger.warning("Heart/ECG features may be unavailable")
 
 def load_audio_models():
-    """Lazily load audio classification and YAMNet models."""
+    """Lazily load audio classification and YAMNet models.
+
+    Uses TensorFlow + tensorflow_hub (~500MB RAM) — only loaded if heart
+    sound analysis is used.
+    """
     global audio_model, yamnet_model
     try:
+        import tensorflow as tf
+        import tensorflow_hub as hub
         audio_model_path = os.path.join(BASE_DIR, 'heart/models/audio_model.h5')
         if audio_model is None and os.path.exists(audio_model_path):
             audio_model = tf.keras.models.load_model(audio_model_path)
@@ -252,6 +259,7 @@ def load_audio_models():
 def extract_embeddings(audio_data):
     """Extract embeddings using YAMNet model."""
     try:
+        import numpy as np
         max_frames = 10
         scores, embeddings_output, _ = yamnet_model(audio_data)
         embeddings_output = embeddings_output[:max_frames]
@@ -266,6 +274,8 @@ def extract_embeddings(audio_data):
 def analyze_ecg(ecg_data, threshold=0.1):
     """Analyze ECG data using the autoencoder model."""
     try:
+        import numpy as np
+        import torch
         ecg_data = np.array(ecg_data, dtype=np.float32)
         ecg_data = ecg_data.reshape(1, 1, 141)
         ecg_tensor = torch.tensor(ecg_data, dtype=torch.float32)
@@ -492,6 +502,7 @@ def analyze_heart():
         # ---- Stage 4: Feature extraction ----
         t3 = _time.time()
         try:
+            import pandas as pd
             input_data = pd.DataFrame([parsed])
             logger.info(f"[analyze_heart] Stage 4: Feature vector shape={input_data.shape}, columns={list(input_data.columns)}")
         except Exception as fe:
@@ -595,8 +606,11 @@ def analyze_ecg_endpoint():
         # Ensure ECG model is loaded lazily
         load_heart_and_ecg_models()
         is_anomaly, original, reconstructed = analyze_ecg(ecg_values)
-        
-        # Create plot
+
+        # Create plot (matplotlib imported lazily)
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
         plt.figure(figsize=(12, 6))
         plt.plot(original, label='Original ECG', color='#2ecc71', linewidth=2)
         plt.plot(reconstructed, label='Reconstructed', color='#e74c3c', linewidth=2)
@@ -640,11 +654,13 @@ def analyze_audio():
             
         if not audio_file.filename.endswith('.wav'):
             return jsonify({'error': 'Please upload a WAV file'}), 400
-        
+
+        import librosa
+        import numpy as np
         y, sr = librosa.load(audio_file, sr=16000)
         y = y.astype(np.float32)
         y = librosa.util.normalize(y)
-        
+
         embeddings = extract_embeddings(y)
         predictions = audio_model.predict(embeddings, verbose=0)
         predicted_class = np.argmax(predictions[0])
@@ -1610,9 +1626,12 @@ os.makedirs(REPORTS_DIR, exist_ok=True)
 def generate_pdf_report(user_id, analysis_data):
     """Generate a PDF report from the analysis data."""
     try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         # Create a unique filename for the report
         filename = os.path.join(REPORTS_DIR, f"medical_report_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
-        
+
         # Create the PDF document
         doc = SimpleDocTemplate(filename, pagesize=letter)
         styles = getSampleStyleSheet()
@@ -1712,14 +1731,11 @@ def download_report():
         return jsonify({'error': 'Failed to download report'}), 500
 
 
-# Preload ML models at module import time (runs under gunicorn --preload).
-# This avoids the first-request timeout (502) caused by lazy-loading
-# TensorFlow + PyTorch + models on Render's free tier.
-logger.info("Preloading heart disease + ECG models at startup...")
-try:
-    load_heart_and_ecg_models()
-except Exception as e:
-    logger.warning(f"Heart/ECG model preload failed (will retry on first request): {e}")
+# NOTE: Do NOT preload ML models at startup. On Render's free tier (512MB RAM),
+# loading TensorFlow + PyTorch + all models at startup causes OOM. Models are
+# loaded lazily on first use of each feature (heart prediction, ECG, audio).
+# The first request to each feature will be slow (~10-20s for library import +
+# model load) but subsequent requests are fast (models stay in memory).
 
 if __name__ == '__main__':
     # Local development entry point.

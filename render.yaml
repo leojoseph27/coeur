@@ -15,10 +15,9 @@ services:
     startCommand: >
       gunicorn app:app
       --bind 0.0.0.0:$PORT
-      --timeout 240
+      --timeout 300
       --workers 1
       --threads 4
-      --preload
     envVars:
       - key: PYTHON_VERSION
         value: "3.10.14"

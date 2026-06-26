@@ -1,5 +1,13 @@
 # All pinned versions below have prebuilt cp310 wheels on Linux x86_64.
 # pip will select them automatically (no --only-binary directive needed).
+#
+# MEMORY OPTIMIZATION:
+# - torch uses the CPU-only build (no NVIDIA CUDA packages) — saves ~2GB
+#   disk + ~1.5GB RAM. Installed from the PyTorch CPU index via --extra-index-url.
+# - tensorboard removed (not needed at runtime; TF works without it)
+# - seaborn removed (not imported anywhere)
+# - requests-toolbelt removed (not imported)
+--extra-index-url https://download.pytorch.org/whl/cpu
 absl-py==2.3.1
 annotated-types==0.7.0
 anyio==4.5.2
@@ -76,24 +84,22 @@ python-socketio==5.12.1
 pytz==2021.1
 reportlab==4.4.3
 requests==2.31.0
-requests-toolbelt==1.0.0
 resampy==0.4.2
 rsa==4.7.2
 scikit-learn==1.3.2
 scipy==1.9.3
-seaborn==0.11.2
 simple-websocket==1.1.0
 six==1.16.0
 sniffio==1.3.1
 SoundFile==0.10.3.post1
 sympy==1.10.1
-tensorboard==2.12.0
 tensorflow==2.12.0
 tensorflow-estimator==2.12.0
 tensorflow-hub==0.12.0
 termcolor==1.1.0
 threadpoolctl==3.5.0
-torch==2.0.0
+# CPU-only PyTorch — no NVIDIA CUDA packages (saves ~2GB disk, ~1.5GB RAM)
+torch==2.0.1+cpu
 tqdm==4.67.1
 typing-extensions==4.15.0
 urllib3==2.2.3
