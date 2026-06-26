@@ -3,36 +3,42 @@ services:
     name: coeur
     env: python
     plan: free
+    # Python 3.10 is required (runtime.txt). The app pins old versions of
+    # numpy/tensorflow/torch that have no wheels for Python 3.11+.
     buildCommand: >
       python -m pip install --upgrade pip &&
       pip install protobuf==3.20.* &&
       pip install -r requirements.txt &&
-      pip install gdown pyrebase4 gunicorn reportlab eventlet &&
+      pip install gdown gunicorn psycopg2-binary &&
       python download_models.py &&
       ls -la heart/models/ &&
-      ls -la ecg\ project/ &&
-      ls -la archive/
-    startCommand: python -m gunicorn app:app --bind 0.0.0.0:$PORT --timeout 240 --workers 1 --threads 4 --worker-class=eventlet --preload
+      ls -la "ecg project/"
+    # NOTE: use sync worker (not eventlet) — eventlet's monkey-patching
+    # segfaults with TensorFlow/PyTorch native libs. Flask-SocketIO runs in
+    # threading async mode, which is compatible with the sync worker.
+    startCommand: >
+      python -m gunicorn app:app
+      --bind 0.0.0.0:$PORT
+      --timeout 240
+      --workers 1
+      --threads 4
+      --preload
     envVars:
       - key: PYTHON_VERSION
-        value: 3.8.10
-      - key: PORT
-        value: 10000
+        value: 3.10.14
       - key: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION
         value: python
       - key: DEPLOYMENT_ENV
         value: production
       - key: PYTHONUNBUFFERED
         value: "true"
-      - key: MODELS_PATH
-        value: "/opt/render/project/src"
       - key: TF_FORCE_GPU_ALLOW_GROWTH
         value: "true"
       - key: TF_CPP_MIN_LOG_LEVEL
         value: "2"
       - key: GUNICORN_CMD_ARGS
-        value: "--log-level=debug"
-      - key: PYTHONPATH
-        value: "/opt/render/project/src"
-      - key: MAX_CONTENT_LENGTH
-        value: "16777216"
+        value: "--log-level=info"
+      # Required — set these in the Render dashboard (do NOT commit secrets):
+      # - NEON_DATABASE_URL (your Neon PostgreSQL connection string)
+      # - GOOGLE_API_KEY    (your Google Gemini API key)
+      # - FLASK_SECRET_KEY  (a random secret for session signing)
