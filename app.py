@@ -1624,9 +1624,10 @@ def download_report():
 
 if __name__ == '__main__':
     # Local development entry point.
-    # The app uses Flask-SocketIO with eventlet async mode, so we start it via
-    # socketio.run() instead of app.run(). gunicorn (see Procfile) is used in
-    # production with a gevent/eventlet worker class.
+    # The app uses Flask-SocketIO in 'threading' async mode (not eventlet/
+    # gevent — those caused segfaults with TensorFlow/PyTorch native libs).
+    # gunicorn (see Procfile) is used in production with the sync worker
+    # class, which is compatible with threading mode.
     server_port = int(os.environ.get("PORT", "5000"))
     logger.info(f"Starting Coeur on port {server_port} (debug={DEBUG_MODE})")
     socketio.run(
