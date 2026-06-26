@@ -398,3 +398,139 @@ def delete_medical_record(record_id, user_id):
             (_parse_uuid(record_id), _parse_uuid(user_id)),
         )
         return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Demo files (ECG + Heart Sound) — used by the demo dataset manager
+# ---------------------------------------------------------------------------
+
+def _demo_table(kind):
+    """Return the table name for the given demo file kind."""
+    if kind == "ecg":
+        return "demo_ecg_files"
+    elif kind == "heart_sound":
+        return "demo_heart_sound_files"
+    raise ValueError(f"Unknown demo file kind: {kind}")
+
+
+def list_demo_files(kind, active_only=True):
+    """List demo files of the given kind ('ecg' or 'heart_sound')."""
+    table = _demo_table(kind)
+    sql = f"SELECT id, title, filename, storage_path, description, file_size, uploaded_at, uploaded_by, active FROM {table}"
+    if active_only:
+        sql += " WHERE active = TRUE"
+    sql += " ORDER BY uploaded_at DESC"
+    with get_conn() as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['id'] = str(d['id'])
+        if d.get('uploaded_by'):
+            d['uploaded_by'] = str(d['uploaded_by'])
+        if d.get('uploaded_at'):
+            d['uploaded_at'] = d['uploaded_at'].isoformat()
+        out.append(d)
+    return out
+
+
+def get_demo_file(kind, file_id):
+    """Return a single demo file row, or None."""
+    table = _demo_table(kind)
+    with get_conn() as cur:
+        cur.execute(
+            f"SELECT id, title, filename, storage_path, description, file_size, "
+            f"uploaded_at, uploaded_by, active FROM {table} WHERE id = %s",
+            (_parse_uuid(file_id),),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d['id'] = str(d['id'])
+    if d.get('uploaded_by'):
+        d['uploaded_by'] = str(d['uploaded_by'])
+    if d.get('uploaded_at'):
+        d['uploaded_at'] = d['uploaded_at'].isoformat()
+    return d
+
+
+def insert_demo_file(kind, title, filename, storage_path, description=None,
+                     file_size=0, uploaded_by=None):
+    """Insert a demo file row. Returns the new row."""
+    table = _demo_table(kind)
+    uid = _parse_uuid(uploaded_by) if uploaded_by else None
+    with get_conn() as cur:
+        cur.execute(
+            f"INSERT INTO {table} (title, filename, storage_path, description, "
+            f"file_size, uploaded_by) "
+            f"VALUES (%s, %s, %s, %s, %s, %s) "
+            f"RETURNING id, title, filename, storage_path, description, "
+            f"file_size, uploaded_at, active",
+            (title, filename, storage_path, description, file_size, uid),
+        )
+        row = cur.fetchone()
+    d = dict(row)
+    d['id'] = str(d['id'])
+    if d.get('uploaded_at'):
+        d['uploaded_at'] = d['uploaded_at'].isoformat()
+    return d
+
+
+def rename_demo_file(kind, file_id, new_title, description=None):
+    """Update a demo file's title (and optionally description). Returns row or None."""
+    table = _demo_table(kind)
+    with get_conn() as cur:
+        if description is not None:
+            cur.execute(
+                f"UPDATE {table} SET title = %s, description = %s WHERE id = %s "
+                f"RETURNING id, title, filename, storage_path, description, "
+                f"file_size, uploaded_at, active",
+                (new_title, description, _parse_uuid(file_id)),
+            )
+        else:
+            cur.execute(
+                f"UPDATE {table} SET title = %s WHERE id = %s "
+                f"RETURNING id, title, filename, storage_path, description, "
+                f"file_size, uploaded_at, active",
+                (new_title, _parse_uuid(file_id)),
+            )
+        row = cur.fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d['id'] = str(d['id'])
+    if d.get('uploaded_at'):
+        d['uploaded_at'] = d['uploaded_at'].isoformat()
+    return d
+
+
+def delete_demo_file(kind, file_id):
+    """Delete a demo file row. Returns (True, storage_path) if deleted, else (False, None)."""
+    table = _demo_table(kind)
+    with get_conn() as cur:
+        cur.execute(
+            f"SELECT storage_path FROM {table} WHERE id = %s",
+            (_parse_uuid(file_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return False, None
+        storage_path = row['storage_path']
+        cur.execute(
+            f"DELETE FROM {table} WHERE id = %s",
+            (_parse_uuid(file_id),),
+        )
+        return cur.rowcount > 0, storage_path
+
+
+def is_admin(user_id):
+    """Check if a user has admin privileges."""
+    with get_conn() as cur:
+        cur.execute(
+            "SELECT is_admin FROM users WHERE id = %s",
+            (_parse_uuid(user_id),),
+        )
+        row = cur.fetchone()
+    return bool(row and row.get('is_admin'))

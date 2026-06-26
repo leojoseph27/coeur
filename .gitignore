@@ -40,3 +40,6 @@ reports/*.pdf
 # in this repo (total ~60 MB, largest file 31 MB — all under GitHub's 100 MB
 # limit). They are committed directly so the app works out of the box on any
 # host without needing a separate download step.
+
+# Demo files (uploaded at runtime via admin — not committed)
+demo_files/

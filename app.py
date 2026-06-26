@@ -1041,6 +1041,206 @@ def handle_medical_record(record_id):
             logger.error(f"Error deleting medical record: {str(e)}")
             return jsonify({'error': 'Failed to delete medical record'}), 500
 
+# ---------------------------------------------------------------------------
+# Admin: Demo Dataset Manager (Parts 3, 4, 5)
+# ---------------------------------------------------------------------------
+
+# Demo files are stored on disk under DEMO_FILES_DIR (defaults to 'demo_files'
+# relative to the app). On Render, mount a persistent disk and set
+# DEMO_FILES_DIR to the disk path so files survive deploys.
+DEMO_FILES_DIR = os.environ.get('DEMO_FILES_DIR', os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'demo_files'))
+
+
+def admin_required(f):
+    """Decorator: requires logged-in user with is_admin flag."""
+    from functools import wraps
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        uid = session.get('user_id')
+        if not uid:
+            return jsonify({'error': 'Not authenticated'}), 401
+        try:
+            if not db_neon.is_admin(uid):
+                return jsonify({'error': 'Admin access required'}), 403
+        except Exception:
+            return jsonify({'error': 'Authorization check failed'}), 500
+        return f(*args, **kwargs)
+    return wrapper
+
+
+@app.route('/admin')
+@login_required
+def admin_page():
+    """Admin page: demo dataset manager."""
+    try:
+        if not db_neon.is_admin(session.get('user_id')):
+            return redirect(url_for('index'))
+    except Exception:
+        return redirect(url_for('index'))
+    return render_template('admin.html')
+
+
+def _demo_kind_from_path(path):
+    """Map a URL path segment to a demo kind ('ecg' or 'heart_sound')."""
+    if 'ecg' in path:
+        return 'ecg'
+    if 'heart_sound' in path or 'heart-sound' in path or 'audio' in path:
+        return 'heart_sound'
+    return None
+
+
+@app.route('/api/demo/<kind>', methods=['GET'])
+@login_required
+def list_demo(kind):
+    """List active demo files (available to all logged-in users for the dropdowns)."""
+    if kind not in ('ecg', 'heart_sound'):
+        return jsonify({'error': 'Invalid kind'}), 400
+    try:
+        files = db_neon.list_demo_files(kind, active_only=True)
+        return jsonify({'files': files})
+    except Exception as e:
+        logger.error(f"Error listing demo {kind} files: {str(e)}")
+        return jsonify({'error': 'Failed to list demo files'}), 500
+
+
+@app.route('/api/demo/<kind>/<file_id>/content', methods=['GET'])
+@login_required
+def get_demo_content(kind, file_id):
+    """Serve the binary content of a demo file (for the frontend to POST to the
+    existing /analyze_ecg or /analyze_audio pipeline)."""
+    if kind not in ('ecg', 'heart_sound'):
+        return jsonify({'error': 'Invalid kind'}), 400
+    try:
+        info = db_neon.get_demo_file(kind, file_id)
+        if not info or not info.get('active'):
+            return jsonify({'error': 'File not found'}), 404
+        path = info['storage_path']
+        if not os.path.exists(path):
+            return jsonify({'error': 'File not found on disk'}), 404
+        # ECG demo files are JSON -> return as JSON for the frontend to POST
+        # to /analyze_ecg. Heart sound files are WAV -> return as binary.
+        if kind == 'ecg':
+            with open(path, 'r') as f:
+                return jsonify(json.load(f))
+        else:
+            return send_file(path, mimetype='audio/wav',
+                             as_attachment=False,
+                             download_name=info.get('filename', 'demo.wav'))
+    except Exception as e:
+        logger.error(f"Error serving demo {kind} content: {str(e)}")
+        return jsonify({'error': 'Failed to serve file'}), 500
+
+
+@app.route('/api/admin/demo/<kind>', methods=['GET'])
+@admin_required
+def admin_list_demo(kind):
+    """Admin: list ALL demo files (including inactive)."""
+    if kind not in ('ecg', 'heart_sound'):
+        return jsonify({'error': 'Invalid kind'}), 400
+    try:
+        files = db_neon.list_demo_files(kind, active_only=False)
+        return jsonify({'files': files})
+    except Exception as e:
+        logger.error(f"Admin list demo error: {str(e)}")
+        return jsonify({'error': 'Failed to list'}), 500
+
+
+@app.route('/api/admin/demo/<kind>', methods=['POST'])
+@admin_required
+def admin_upload_demo(kind):
+    """Admin: upload a new demo file."""
+    if kind not in ('ecg', 'heart_sound'):
+        return jsonify({'error': 'Invalid kind'}), 400
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        f = request.files['file']
+        if not f.filename:
+            return jsonify({'error': 'No filename'}), 400
+
+        title = request.form.get('title') or os.path.splitext(f.filename)[0]
+        description = request.form.get('description') or ''
+
+        # Validate file type
+        if kind == 'ecg' and not f.filename.endswith('.json'):
+            return jsonify({'error': 'ECG demo files must be .json'}), 400
+        if kind == 'heart_sound' and not f.filename.endswith('.wav'):
+            return jsonify({'error': 'Heart sound demo files must be .wav'}), 400
+
+        # Save to disk
+        subdir = 'ecg' if kind == 'ecg' else 'heart_sound'
+        dest_dir = os.path.join(DEMO_FILES_DIR, subdir)
+        os.makedirs(dest_dir, exist_ok=True)
+        # Unique filename to avoid collisions
+        import uuid as _uuid
+        unique_name = f"{_uuid.uuid4().hex}_{f.filename}"
+        dest_path = os.path.join(dest_dir, unique_name)
+        f.save(dest_path)
+        file_size = os.path.getsize(dest_path)
+
+        # Insert metadata
+        row = db_neon.insert_demo_file(
+            kind=kind,
+            title=title,
+            filename=f.filename,
+            storage_path=dest_path,
+            description=description,
+            file_size=file_size,
+            uploaded_by=session.get('user_id'),
+        )
+        logger.info(f"Admin uploaded demo {kind}: {title} ({file_size} bytes)")
+        return jsonify({'status': 'success', 'file': row}), 201
+    except Exception as e:
+        logger.error(f"Admin upload demo error: {str(e)}")
+        return jsonify({'error': 'Failed to upload'}), 500
+
+
+@app.route('/api/admin/demo/<kind>/<file_id>', methods=['PUT'])
+@admin_required
+def admin_rename_demo(kind, file_id):
+    """Admin: rename / update description of a demo file."""
+    if kind not in ('ecg', 'heart_sound'):
+        return jsonify({'error': 'Invalid kind'}), 400
+    try:
+        data = request.get_json(silent=True) or {}
+        new_title = data.get('title')
+        new_desc = data.get('description')
+        if not new_title:
+            return jsonify({'error': 'Title is required'}), 400
+        row = db_neon.rename_demo_file(kind, file_id, new_title,
+                                       description=new_desc)
+        if not row:
+            return jsonify({'error': 'File not found'}), 404
+        logger.info(f"Admin renamed demo {kind} {file_id} -> {new_title}")
+        return jsonify({'status': 'success', 'file': row})
+    except Exception as e:
+        logger.error(f"Admin rename demo error: {str(e)}")
+        return jsonify({'error': 'Failed to rename'}), 500
+
+
+@app.route('/api/admin/demo/<kind>/<file_id>', methods=['DELETE'])
+@admin_required
+def admin_delete_demo(kind, file_id):
+    """Admin: delete a demo file (metadata + disk file)."""
+    if kind not in ('ecg', 'heart_sound'):
+        return jsonify({'error': 'Invalid kind'}), 400
+    try:
+        deleted, storage_path = db_neon.delete_demo_file(kind, file_id)
+        if not deleted:
+            return jsonify({'error': 'File not found'}), 404
+        # Remove the binary file from disk
+        if storage_path and os.path.exists(storage_path):
+            try:
+                os.remove(storage_path)
+            except OSError as e:
+                logger.warning(f"Could not delete file {storage_path}: {e}")
+        logger.info(f"Admin deleted demo {kind} {file_id}")
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logger.error(f"Admin delete demo error: {str(e)}")
+        return jsonify({'error': 'Failed to delete'}), 500
+
 @app.route('/emergency_map')
 @login_required
 def emergency_map():

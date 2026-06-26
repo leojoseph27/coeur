@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Demo Dataset Manager</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root[data-theme="dark"] {
+            --primary-color: #f03e5f;
+            --accent-color: #d1062a;
+            --text-color: #ffffff;
+            --text-light: #fccad3;
+            --card-color: rgba(26, 26, 46, 0.8);
+            --border-radius: 12px;
+        }
+        body {
+            background: linear-gradient(135deg, rgba(26,26,46,0.95) 0%, rgba(22,33,62,0.95) 50%, rgba(209,6,42,0.2) 100%);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .admin-container { max-width: 1100px; margin: 0 auto; }
+        .admin-header { text-align: center; margin-bottom: 30px; }
+        .admin-header h1 { color: var(--primary-color); font-size: 2rem; }
+        .admin-header a { color: var(--text-light); text-decoration: none; }
+        .demo-card {
+            background: var(--card-color);
+            border-radius: var(--border-radius);
+            padding: 24px;
+            margin-bottom: 24px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .demo-card h2 { color: var(--primary-color); font-size: 1.4rem; margin-bottom: 16px; }
+        .upload-form { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+        .upload-form input[type="text"], .upload-form input[type="file"] {
+            background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.1);
+            color: var(--text-color); padding: 10px; border-radius: 8px;
+        }
+        .upload-form input[type="text"] { flex: 1; min-width: 200px; }
+        .upload-form input[type="file"] { flex: 1; min-width: 200px; }
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+            border: none; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer;
+        }
+        .btn-primary:hover { opacity: 0.9; }
+        .btn-sm { padding: 4px 10px; font-size: 0.8rem; border-radius: 6px; border: none; cursor: pointer; }
+        .btn-edit { background: #ffc107; color: #000; }
+        .btn-delete { background: #dc3545; color: #fff; }
+        .file-list { list-style: none; padding: 0; }
+        .file-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px; background: rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 8px;
+        }
+        .file-info { flex: 1; }
+        .file-title { font-weight: 600; }
+        .file-meta { font-size: 0.8rem; color: var(--text-light); opacity: 0.7; }
+        .file-actions { display: flex; gap: 6px; }
+        .empty-msg { color: var(--text-light); opacity: 0.6; text-align: center; padding: 20px; }
+        .alert { padding: 10px; border-radius: 8px; margin-bottom: 12px; display: none; }
+        .alert-success { background: rgba(40,167,69,0.2); color: #51cf66; }
+        .alert-error { background: rgba(220,53,69,0.2); color: #ff6b6b; }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <div class="admin-header">
+            <h1><i class="fas fa-cog"></i> Admin - Demo Dataset Manager</h1>
+            <p><a href="/"><i class="fas fa-arrow-left"></i> Back to Dashboard</a></p>
+        </div>
+
+        <div id="alertBox" class="alert"></div>
+
+        <!-- Demo ECG Files -->
+        <div class="demo-card">
+            <h2><i class="fas fa-heartbeat"></i> Demo ECG Files</h2>
+            <form class="upload-form" id="ecgUploadForm">
+                <input type="text" id="ecgTitle" placeholder="Title (e.g. Normal ECG)">
+                <input type="text" id="ecgDesc" placeholder="Description (optional)">
+                <input type="file" id="ecgFile" accept=".json" required>
+                <button type="submit" class="btn-primary"><i class="fas fa-upload"></i> Upload</button>
+            </form>
+            <ul class="file-list" id="ecgFileList">
+                <li class="empty-msg">Loading...</li>
+            </ul>
+        </div>
+
+        <!-- Demo Heart Sound Files -->
+        <div class="demo-card">
+            <h2><i class="fas fa-stethoscope"></i> Demo Heart Sound Files</h2>
+            <form class="upload-form" id="hsUploadForm">
+                <input type="text" id="hsTitle" placeholder="Title (e.g. Normal Heart Sound)">
+                <input type="text" id="hsDesc" placeholder="Description (optional)">
+                <input type="file" id="hsFile" accept=".wav" required>
+                <button type="submit" class="btn-primary"><i class="fas fa-upload"></i> Upload</button>
+            </form>
+            <ul class="file-list" id="hsFileList">
+                <li class="empty-msg">Loading...</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        function escapeHtml(str) {
+            if (str == null) return '';
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+            return (bytes/1048576).toFixed(1) + ' MB';
+        }
+        function showAlert(msg, type) {
+            const box = document.getElementById('alertBox');
+            box.textContent = msg;
+            box.className = 'alert alert-' + (type || 'success');
+            box.style.display = 'block';
+            setTimeout(() => { box.style.display = 'none'; }, 3000);
+        }
+
+        async function loadFiles(kind, listId) {
+            try {
+                const resp = await fetch('/api/admin/demo/' + kind);
+                const data = await resp.json();
+                const list = document.getElementById(listId);
+                list.innerHTML = '';
+                if (!data.files || data.files.length === 0) {
+                    list.innerHTML = '<li class="empty-msg">No demo files yet. Upload one above.</li>';
+                    return;
+                }
+                data.files.forEach(f => {
+                    const li = document.createElement('li');
+                    li.className = 'file-item';
+                    li.innerHTML = `
+                        <div class="file-info">
+                            <div class="file-title">${escapeHtml(f.title)}</div>
+                            <div class="file-meta">${escapeHtml(f.filename)} | ${formatSize(f.file_size)} | ${new Date(f.uploaded_at).toLocaleString()}</div>
+                            ${f.description ? `<div class="file-meta">${escapeHtml(f.description)}</div>` : ''}
+                        </div>
+                        <div class="file-actions">
+                            <button class="btn-sm btn-edit" onclick="renameFile('${kind}','${f.id}','${escapeHtml(f.title)}')"><i class="fas fa-edit"></i></button>
+                            <button class="btn-sm btn-delete" onclick="deleteFile('${kind}','${f.id}','${escapeHtml(f.title)}')"><i class="fas fa-trash"></i></button>
+                        </div>`;
+                    list.appendChild(li);
+                });
+            } catch (e) { console.error('loadFiles error:', e); }
+        }
+
+        async function uploadFile(kind, formId) {
+            const form = document.getElementById(formId);
+            const title = form.querySelector('input[type=text]:nth-child(1)').value;
+            const desc = form.querySelector('input[type=text]:nth-child(2)').value;
+            const fileInput = form.querySelector('input[type=file]');
+            const file = fileInput.files[0];
+            if (!file) { showAlert('Please select a file', 'error'); return; }
+            const fd = new FormData();
+            fd.append('title', title || file.name);
+            fd.append('description', desc);
+            fd.append('file', file);
+            try {
+                const resp = await fetch('/api/admin/demo/' + kind, { method: 'POST', body: fd });
+                const data = await resp.json();
+                if (resp.ok) {
+                    showAlert('Uploaded: ' + (data.file.title || 'file'));
+                    form.reset();
+                    loadFiles(kind, kind === 'ecg' ? 'ecgFileList' : 'hsFileList');
+                } else {
+                    showAlert(data.error || 'Upload failed', 'error');
+                }
+            } catch (e) { showAlert('Upload error: ' + e.message, 'error'); }
+        }
+
+        async function renameFile(kind, id, oldTitle) {
+            const newTitle = prompt('Enter new title:', oldTitle);
+            if (!newTitle || newTitle === oldTitle) return;
+            try {
+                const resp = await fetch('/api/admin/demo/' + kind + '/' + id, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: newTitle })
+                });
+                if (resp.ok) {
+                    showAlert('Renamed successfully');
+                    loadFiles(kind, kind === 'ecg' ? 'ecgFileList' : 'hsFileList');
+                } else {
+                    const data = await resp.json();
+                    showAlert(data.error || 'Rename failed', 'error');
+                }
+            } catch (e) { showAlert('Rename error: ' + e.message, 'error'); }
+        }
+
+        async function deleteFile(kind, id, title) {
+            if (!confirm('Delete "' + title + '"? This cannot be undone.')) return;
+            try {
+                const resp = await fetch('/api/admin/demo/' + kind + '/' + id, { method: 'DELETE' });
+                if (resp.ok) {
+                    showAlert('Deleted: ' + title);
+                    loadFiles(kind, kind === 'ecg' ? 'ecgFileList' : 'hsFileList');
+                } else {
+                    const data = await resp.json();
+                    showAlert(data.error || 'Delete failed', 'error');
+                }
+            } catch (e) { showAlert('Delete error: ' + e.message, 'error'); }
+        }
+
+        document.getElementById('ecgUploadForm').addEventListener('submit', e => { e.preventDefault(); uploadFile('ecg', 'ecgUploadForm'); });
+        document.getElementById('hsUploadForm').addEventListener('submit', e => { e.preventDefault(); uploadFile('heart_sound', 'hsUploadForm'); });
+
+        // Load on page open
+        loadFiles('ecg', 'ecgFileList');
+        loadFiles('heart_sound', 'hsFileList');
+    </script>
+</body>
+</html>

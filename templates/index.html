@@ -259,6 +259,27 @@
             padding-left: 5px;
         }
 
+        .source-toggle {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-top: 0.5rem;
+        }
+        .source-toggle label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            color: var(--text-color);
+            font-size: 0.95rem;
+        }
+        .source-toggle input[type="radio"] {
+            accent-color: var(--primary-color);
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
         .form-label {
             font-weight: 600;
             color: var(--text-color);
@@ -880,6 +901,9 @@
         <div class="header">
             <div class="header-content">
                 <h1>Heart Health Analysis System</h1>
+                <a href="/admin" class="btn-logout" style="text-decoration:none; margin-right:8px;" id="adminLink" style="display:none;">
+                    <i class="fas fa-cog"></i> Admin
+                </a>
                 <button onclick="logout()" class="btn-logout">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </button>
@@ -1021,9 +1045,23 @@
                     <h3><i class="fas fa-heartbeat"></i> ECG Analysis</h3>
                     <form id="ecgForm">
                         <div class="mb-3">
+                            <label class="form-label"><strong>ECG Source</strong></label>
+                            <div class="source-toggle">
+                                <label><input type="radio" name="ecgSource" value="upload" checked> Upload My Own ECG</label>
+                                <label><input type="radio" name="ecgSource" value="demo"> Choose Demo ECG</label>
+                            </div>
+                        </div>
+                        <div class="mb-3" id="ecgUploadSection">
                             <label for="ecgFile" class="form-label">Upload ECG Data (JSON file)</label>
                             <input type="file" class="form-control" id="ecgFile" accept=".json" required>
                             <div class="input-guidelines">Upload a JSON file containing 141 ECG values in the format: {"ecg_values": [value1, value2, ...]}</div>
+                        </div>
+                        <div class="mb-3" id="ecgDemoSection" style="display:none;">
+                            <label for="ecgDemoSelect" class="form-label">Select Demo ECG</label>
+                            <select class="form-control" id="ecgDemoSelect">
+                                <option value="">-- Select a demo ECG --</option>
+                            </select>
+                            <div class="input-guidelines" id="ecgDemoDesc"></div>
                         </div>
                         <button type="submit" class="btn btn-primary">
                             <i class="fas fa-chart-line"></i> Analyze ECG
@@ -1049,9 +1087,23 @@
                     <h3><i class="fas fa-stethoscope"></i> Heart Sound Analysis</h3>
                     <form id="heartSoundForm">
                         <div class="mb-3">
+                            <label class="form-label"><strong>Heart Sound Source</strong></label>
+                            <div class="source-toggle">
+                                <label><input type="radio" name="hsSource" value="upload" checked> Upload My Own Recording</label>
+                                <label><input type="radio" name="hsSource" value="demo"> Choose Demo Recording</label>
+                            </div>
+                        </div>
+                        <div class="mb-3" id="hsUploadSection">
                             <label for="audioFile" class="form-label">Upload Heart Sound (WAV format)</label>
                             <input type="file" class="form-control" id="audioFile" accept=".wav" required>
                             <div class="input-guidelines">Upload a WAV file containing heart sound recording</div>
+                        </div>
+                        <div class="mb-3" id="hsDemoSection" style="display:none;">
+                            <label for="hsDemoSelect" class="form-label">Select Demo Recording</label>
+                            <select class="form-control" id="hsDemoSelect">
+                                <option value="">-- Select a demo recording --</option>
+                            </select>
+                            <div class="input-guidelines" id="hsDemoDesc"></div>
                         </div>
                         <button type="submit" class="btn btn-primary">
                             <i class="fas fa-wave-square"></i> Analyze Heart Sound
@@ -1166,6 +1218,17 @@
                 window.location.href = '/login';
             }
         }
+
+        // Show the Admin link only for admin users
+        (async function checkAdmin() {
+            try {
+                const resp = await fetch('/api/admin/demo/ecg', { method: 'GET' });
+                if (resp.ok) {
+                    const link = document.getElementById('adminLink');
+                    if (link) link.style.display = 'inline-block';
+                }
+            } catch (e) { /* not admin — link stays hidden */ }
+        })();
 
         // Add loading indicators
         document.querySelectorAll('form').forEach(form => {
@@ -1358,43 +1421,76 @@
         });
 
         // ECG Analysis
+        // ---- ECG source toggle + demo dropdown ----
+        let ecgDemoFiles = [];
+        async function loadEcgDemoFiles() {
+            try {
+                const resp = await fetch('/api/demo/ecg');
+                const data = await resp.json();
+                ecgDemoFiles = data.files || [];
+                const sel = document.getElementById('ecgDemoSelect');
+                sel.innerHTML = '<option value="">-- Select a demo ECG --</option>';
+                ecgDemoFiles.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f.id;
+                    opt.textContent = f.title + (f.description ? ' — ' + f.description : '');
+                    sel.appendChild(opt);
+                });
+            } catch (e) { console.error('loadEcgDemoFiles:', e); }
+        }
+        document.querySelectorAll('input[name="ecgSource"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                const isDemo = e.target.value === 'demo';
+                document.getElementById('ecgUploadSection').style.display = isDemo ? 'none' : 'block';
+                document.getElementById('ecgDemoSection').style.display = isDemo ? 'block' : 'none';
+                if (isDemo && ecgDemoFiles.length === 0) loadEcgDemoFiles();
+            });
+        });
+        document.getElementById('ecgDemoSelect').addEventListener('change', (e) => {
+            const f = ecgDemoFiles.find(x => x.id === e.target.value);
+            document.getElementById('ecgDemoDesc').textContent = f ? (f.description || '') : '';
+        });
+
         document.getElementById('ecgForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const loading = document.getElementById('ecgLoading');
             const resultBox = document.getElementById('ecgResult');
-            const file = document.getElementById('ecgFile').files[0];
-            
-            if (!file) {
-                alert('Please select a JSON file');
-                return;
-            }
-            
+            const source = document.querySelector('input[name="ecgSource"]:checked').value;
+
+            let data;
             try {
                 loading.style.display = 'block';
                 resultBox.style.display = 'none';
-                
-                const text = await file.text();
-                const data = JSON.parse(text);
-                
+
+                if (source === 'demo') {
+                    const demoId = document.getElementById('ecgDemoSelect').value;
+                    if (!demoId) { alert('Please select a demo ECG'); loading.style.display='none'; return; }
+                    // Fetch the demo file content (JSON) and POST to the SAME /analyze_ecg pipeline
+                    const demoResp = await fetch('/api/demo/ecg/' + demoId + '/content');
+                    data = await demoResp.json();
+                } else {
+                    const file = document.getElementById('ecgFile').files[0];
+                    if (!file) { alert('Please select a JSON file'); loading.style.display='none'; return; }
+                    const text = await file.text();
+                    data = JSON.parse(text);
+                }
+
                 const response = await fetch('/analyze_ecg', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data)
                 });
-                
+
                 const result = await response.json();
-                
+
                 loading.style.display = 'none';
                 resultBox.style.display = 'block';
-                
-                // Update result box class based on analysis
+
                 resultBox.className = `result-box ${result.is_anomaly ? 'anomaly' : 'normal'}`;
-                
-                document.getElementById('ecgPrediction').textContent = 
+
+                document.getElementById('ecgPrediction').textContent =
                     `ECG Analysis: ${result.is_anomaly ? 'Anomaly Detected' : 'Normal ECG'}`;
-                
+
                 if (result.status === 'success' && result.plot_url) {
                     const plotImage = document.getElementById('ecgPlot');
                     plotImage.style.display = 'block';
@@ -1404,7 +1500,6 @@
                     console.error('No plot URL received from server');
                 }
 
-                // Update the AI Analysis tab with ECG results
                 const ecgResultsBox = document.getElementById('ecgResults');
                 if (ecgResultsBox) {
                     ecgResultsBox.innerHTML = `
@@ -1423,41 +1518,83 @@
             }
         });
 
+        // ---- Heart Sound source toggle + demo dropdown ----
+        let hsDemoFiles = [];
+        async function loadHsDemoFiles() {
+            try {
+                const resp = await fetch('/api/demo/heart_sound');
+                const data = await resp.json();
+                hsDemoFiles = data.files || [];
+                const sel = document.getElementById('hsDemoSelect');
+                sel.innerHTML = '<option value="">-- Select a demo recording --</option>';
+                hsDemoFiles.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f.id;
+                    opt.textContent = f.title + (f.description ? ' — ' + f.description : '');
+                    sel.appendChild(opt);
+                });
+            } catch (e) { console.error('loadHsDemoFiles:', e); }
+        }
+        document.querySelectorAll('input[name="hsSource"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                const isDemo = e.target.value === 'demo';
+                document.getElementById('hsUploadSection').style.display = isDemo ? 'none' : 'block';
+                document.getElementById('hsDemoSection').style.display = isDemo ? 'block' : 'none';
+                if (isDemo && hsDemoFiles.length === 0) loadHsDemoFiles();
+            });
+        });
+        document.getElementById('hsDemoSelect').addEventListener('change', (e) => {
+            const f = hsDemoFiles.find(x => x.id === e.target.value);
+            document.getElementById('hsDemoDesc').textContent = f ? (f.description || '') : '';
+        });
+
         // Heart Sound Analysis
         document.getElementById('heartSoundForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const loading = document.getElementById('soundLoading');
             const resultBox = document.getElementById('heartSoundResult');
-            const audioFile = document.getElementById('audioFile').files[0];
-            
-            if (!audioFile) {
-                alert('Please select an audio file');
-                return;
-            }
-            
+            const source = document.querySelector('input[name="hsSource"]:checked').value;
+
             try {
                 loading.style.display = 'block';
                 resultBox.style.display = 'none';
-                
+
+                let audioBlob;
+                let audioName = 'recording.wav';
+
+                if (source === 'demo') {
+                    const demoId = document.getElementById('hsDemoSelect').value;
+                    if (!demoId) { alert('Please select a demo recording'); loading.style.display='none'; return; }
+                    // Fetch the demo WAV file and POST it to the SAME /analyze_audio pipeline
+                    const demoResp = await fetch('/api/demo/heart_sound/' + demoId + '/content');
+                    audioBlob = await demoResp.blob();
+                    const f = hsDemoFiles.find(x => x.id === demoId);
+                    if (f) audioName = f.filename || 'demo.wav';
+                } else {
+                    const audioFile = document.getElementById('audioFile').files[0];
+                    if (!audioFile) { alert('Please select an audio file'); loading.style.display='none'; return; }
+                    audioBlob = audioFile;
+                    audioName = audioFile.name;
+                }
+
                 const formData = new FormData();
-                formData.append('audio', audioFile);
-                
+                formData.append('audio', audioBlob, audioName);
+
                 const response = await fetch('/analyze_audio', {
                     method: 'POST',
                     body: formData
                 });
-                
+
                 const result = await response.json();
-                
+
                 loading.style.display = 'none';
                 resultBox.style.display = 'block';
-                
-                document.getElementById('soundPrediction').textContent = 
+
+                document.getElementById('soundPrediction').textContent =
                     `Detected Condition: ${result.disease}`;
-                document.getElementById('soundConfidence').textContent = 
+                document.getElementById('soundConfidence').textContent =
                     `Confidence: ${result.confidence}%`;
 
-                // Update the AI Analysis tab with Heart Sound results
                 const heartSoundResultsBox = document.getElementById('heartSoundResults');
                 if (heartSoundResultsBox) {
                     heartSoundResultsBox.innerHTML = `
