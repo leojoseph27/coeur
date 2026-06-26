@@ -80,7 +80,15 @@ if missing_files:
     logger.warning(f"Missing model files at startup (some features may be unavailable): {missing_files}")
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY", "default-secret-key-for-development")
+_secret = os.getenv("FLASK_SECRET_KEY", "")
+if not _secret:
+    if os.getenv("DEPLOYMENT_ENV", "development").lower() == "production":
+        raise RuntimeError(
+            "FLASK_SECRET_KEY must be set in production. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    _secret = "default-secret-key-for-development"
+app.config['SECRET_KEY'] = _secret
 # Session cookie configuration for the preview environment.
 # The app is served over HTTPS (https://preview-chat-...space-z.ai) but the
 # Next.js reverse proxy talks to Flask over plain HTTP on localhost. For the
@@ -261,11 +269,20 @@ def analyze_ecg(ecg_data, threshold=0.1):
         raise
 
 def login_required(f):
+    """Require an authenticated session. Returns a JSON 401 for API routes
+    (paths starting with /api/ or returning JSON), and redirects to /login
+    for page routes. Preserves the wrapped function's name/docstring via
+    functools.wraps."""
+    from functools import wraps
+    @wraps(f)
     def wrapper(*args, **kwargs):
         if 'user_id' not in session:
+            # API routes (POST/PUT/DELETE or /api/* path) get a JSON 401
+            if (request.path.startswith('/api/') or
+                    request.method in ('POST', 'PUT', 'DELETE', 'PATCH')):
+                return jsonify({'error': 'Not authenticated'}), 401
             return redirect(url_for('login'))
         return f(*args, **kwargs)
-    wrapper.__name__ = f.__name__
     return wrapper
 
 @app.route('/')
@@ -357,14 +374,22 @@ def emergency():
     return render_template('emergency_map.html', ors_api_key=ors_api_key)
 
 @app.route('/analyze_heart', methods=['POST'])
+@login_required
 def analyze_heart():
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         logger.info(f"Received heart data: {data}")
-        
+
+        # Validate all required fields are present
+        required = ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg',
+                    'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal']
+        missing = [f for f in required if f not in data or data[f] == '']
+        if missing:
+            return jsonify({'error': f'Missing required fields: {", ".join(missing)}'}), 400
+
         # Ensure models are loaded lazily
         load_heart_and_ecg_models()
-        
+
         input_data = pd.DataFrame([{
             'age': float(data['age']),
             'sex': int(data['sex']),
@@ -434,6 +459,7 @@ def analyze_heart():
         return jsonify({'error': str(e)}), 400
 
 @app.route('/analyze_ecg', methods=['POST'])
+@login_required
 def analyze_ecg_endpoint():
     try:
         data = request.get_json()
@@ -476,6 +502,7 @@ def analyze_ecg_endpoint():
         return jsonify({'error': str(e), 'status': 'error'}), 400
 
 @app.route('/analyze_audio', methods=['POST'])
+@login_required
 def analyze_audio():
     try:
         # Lazily load audio and YAMNet models
@@ -588,6 +615,7 @@ def update_emergency(emergency_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/volunteer/toggle', methods=['POST'])
+@login_required
 def toggle_volunteer():
     if 'user_id' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
@@ -611,6 +639,7 @@ def toggle_volunteer():
     return jsonify({'status': 'success', 'is_volunteer': new_status})
 
 @app.route('/api/volunteer/location', methods=['POST'])
+@login_required
 def update_volunteer_location():
     if 'user_id' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
@@ -723,23 +752,24 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return distance
 
 @app.route('/ai_doctor', methods=['POST'])
+@login_required
 def ai_doctor():
     try:
-        data = request.json
+        data = request.get_json(silent=True) or {}
         user_query = data.get('query', '')
-        
+
         if not user_query:
             return jsonify({'error': 'No query provided'}), 400
-        
+
         # Generate response using the Gemini model
         response = generate_output(user_query)
-        
+
         if response:
             return jsonify({'response': response})
         else:
             return jsonify({'error': 'Failed to generate response'}), 500
     except Exception as e:
-        print(f"Error in AI Doctor: {str(e)}")
+        logger.error(f"Error in AI Doctor: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 def generate_output(input_text):
@@ -830,6 +860,7 @@ def generate_output(input_text):
         return "Chest pain after jogging could indicate several conditions. If the pain is sharp, radiates to your arm or jaw, or is accompanied by shortness of breath, seek immediate medical attention. For milder discomfort, try warming up properly before exercise, staying hydrated, and gradually increasing your activity level. Consider consulting a cardiologist for a thorough evaluation, especially if the pain persists or worsens. They may recommend tests like an ECG or stress test to determine the cause."
 
 @app.route('/api/emergency_contacts', methods=['GET', 'POST', 'DELETE'])
+@login_required
 def handle_emergency_contacts():
     if 'user_id' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
@@ -1011,6 +1042,7 @@ def handle_medical_record(record_id):
             return jsonify({'error': 'Failed to delete medical record'}), 500
 
 @app.route('/emergency_map')
+@login_required
 def emergency_map():
     if not session.get('user'):
         return redirect(url_for('login'))
@@ -1018,6 +1050,7 @@ def emergency_map():
     return render_template('emergency_map.html', ors_api_key=ors_api_key)
 
 @app.route('/api/generate_analysis', methods=['POST'])
+@login_required
 def generate_analysis():
     try:
         data = request.get_json()

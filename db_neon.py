@@ -49,13 +49,46 @@ def _get_pool():
     return _pool
 
 
+def _checkout_healthy_conn():
+    """Get a healthy connection from the pool, retrying once if stale.
+
+    Neon (and any managed Postgres) may close idle connections server-side.
+    We probe the connection with a trivial SELECT; if it's dead we discard
+    it and try a fresh one (up to 2 attempts).
+    """
+    pool = _get_pool()
+    last_exc = None
+    for attempt in range(2):
+        conn = pool.getconn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+            return conn  # healthy
+        except psycopg2.OperationalError as e:
+            # Stale/dead connection — discard and retry once.
+            last_exc = e
+            logger.warning("DB connection stale (attempt %d), retrying: %s",
+                           attempt + 1, str(e)[:120])
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                pass
+            conn = None
+    raise last_exc or RuntimeError("Could not acquire a DB connection")
+
+
 @contextmanager
 def get_conn():
-    """Context manager that yields a RealDictCursor and returns the conn."""
-    pool = _get_pool()
-    conn = pool.getconn()
+    """Context manager that yields a RealDictCursor and returns the conn.
+
+    Acquires a healthy connection (probed with SELECT 1 to avoid the
+    "connection already closed" error on stale pooled connections), runs
+    the caller's block in a single transaction, commits on success, and
+    always returns the connection to the pool.
+    """
+    conn = _checkout_healthy_conn()
     try:
-        # autocommit=False (default) so each block is one transaction.
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             yield cur
         conn.commit()
@@ -63,7 +96,7 @@ def get_conn():
         conn.rollback()
         raise
     finally:
-        pool.putconn(conn)
+        _get_pool().putconn(conn)
 
 
 # ---------------------------------------------------------------------------

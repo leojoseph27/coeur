@@ -687,6 +687,17 @@
     // client-side.
     // ---------------------------------------------------------------------------
 
+    // Escape user-supplied text for safe insertion into innerHTML (prevents XSS).
+    function escapeHtml(str) {
+        if (str == null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     async function loadUserData() {
         try {
             // Load emergency contacts from Neon
@@ -703,14 +714,17 @@
                         const contactElement = document.createElement('div');
                         contactElement.className = 'contact-item';
                         contactElement.dataset.contactId = id;
+                        const safeName = escapeHtml(info.name);
+                        const safePhone = escapeHtml(info.phone);
+                        const safeId = escapeHtml(id);
                         contactElement.innerHTML = `
                             <div class="contact-info">
-                                <div class="contact-name">${info.name}</div>
-                                <div class="contact-phone">${info.phone}</div>
+                                <div class="contact-name">${safeName}</div>
+                                <div class="contact-phone">${safePhone}</div>
                             </div>
                             <div class="contact-actions">
-                                <button onclick="callContact('${info.phone}')" title="Call"><i class="fas fa-phone"></i></button>
-                                <button onclick="removeContact('${id}')" title="Remove"><i class="fas fa-trash"></i></button>
+                                <button onclick="callContact('${safePhone}')" title="Call"><i class="fas fa-phone"></i></button>
+                                <button onclick="removeContact('${safeId}')" title="Remove"><i class="fas fa-trash"></i></button>
                             </div>
                         `;
                         contactsDiv.insertBefore(contactElement, addButton);
@@ -743,15 +757,17 @@
                         const dateStr = record.uploaded_at
                             ? new Date(record.uploaded_at).toLocaleDateString()
                             : '';
+                        const safeName = escapeHtml(record.name);
+                        const safeId = escapeHtml(record.id);
                         recordElement.innerHTML = `
                             <div class="record-info">
-                                <div class="record-name">${record.name}</div>
+                                <div class="record-name">${safeName}</div>
                                 <div class="record-date">${dateStr}</div>
                             </div>
                             <div class="record-actions">
-                                <button onclick="viewRecord('${record.id}')" title="View"><i class="fas fa-eye"></i></button>
-                                <button onclick="downloadRecord('${record.id}')" title="Download"><i class="fas fa-download"></i></button>
-                                <button onclick="removeRecord('${record.id}')" title="Remove"><i class="fas fa-trash"></i></button>
+                                <button onclick="viewRecord('${safeId}')" title="View"><i class="fas fa-eye"></i></button>
+                                <button onclick="downloadRecord('${safeId}')" title="Download"><i class="fas fa-download"></i></button>
+                                <button onclick="removeRecord('${safeId}')" title="Remove"><i class="fas fa-trash"></i></button>
                             </div>
                         `;
                         recordsList.appendChild(recordElement);
@@ -1317,7 +1333,7 @@
             }
             modal.innerHTML = `
                 <div class="modal-content">
-                    <h3>${record.name}</h3>
+                    <h3>${escapeHtml(record.name)}</h3>
                     <div class="record-content">${content}</div>
                     <div class="modal-buttons">
                         <button class="emergency-button" onclick="this.closest('.modal').remove()">Close</button>
