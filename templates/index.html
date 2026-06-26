@@ -1230,17 +1230,26 @@
             } catch (e) { /* not admin — link stays hidden */ }
         })();
 
-        // Add loading indicators
+        // Add loading indicators — map form IDs to their loading/result element IDs.
+        // (The old code did this.id.replace('Form','Loading') which produced wrong
+        // IDs: heartRiskForm -> heartRiskLoading, but the actual ID is heartLoading.
+        // This caused "Cannot read properties of null (reading 'style')" crashes.)
+        const FORM_LOADING_MAP = {
+            'heartRiskForm': { loading: 'heartLoading', result: 'heartRiskResult' },
+            'ecgForm':       { loading: 'ecgLoading',    result: 'ecgResult' },
+            'heartSoundForm':{ loading: 'soundLoading',  result: 'heartSoundResult' }
+        };
         document.querySelectorAll('form').forEach(form => {
             form.addEventListener('submit', function() {
-                const loadingId = this.id.replace('Form', 'Loading');
-                const resultBox = document.getElementById(this.id.replace('Form', 'Result'));
-                document.getElementById(loadingId).style.display = 'block';
-                resultBox.style.display = 'none';
-
-                // Hide ECG plot when form is submitted
+                const ids = FORM_LOADING_MAP[this.id];
+                if (!ids) return;  // unknown form — skip
+                const loadingEl = document.getElementById(ids.loading);
+                const resultEl = document.getElementById(ids.result);
+                if (loadingEl) loadingEl.style.display = 'block';
+                if (resultEl) resultEl.style.display = 'none';
                 if (this.id === 'ecgForm') {
-                    document.getElementById('ecgPlot').style.display = 'none';
+                    const plot = document.getElementById('ecgPlot');
+                    if (plot) plot.style.display = 'none';
                 }
             });
         });
@@ -1362,29 +1371,58 @@
                     body: JSON.stringify(data)
                 });
 
+                // Check response.ok BEFORE parsing JSON — a 502/500 from
+                // gunicorn returns HTML (not JSON), so response.json() would
+                // throw "Unexpected end of JSON input".
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    loading.style.display = 'none';
+                    resultBox.style.display = 'block';
+                    let errMsg = `Server error (HTTP ${response.status})`;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.error) errMsg = errorJson.error;
+                        if (errorJson.stage) errMsg = `[${errorJson.stage}] ${errMsg}`;
+                    } catch (e) {
+                        // HTML error page — show a short snippet
+                        errMsg = `Server error (HTTP ${response.status}). The model may still be loading — please try again in a moment.`;
+                    }
+                    const progressBar = document.getElementById('riskProgress');
+                    if (progressBar) {
+                        progressBar.style.width = '0%';
+                        progressBar.textContent = 'N/A';
+                        progressBar.className = 'progress-bar bg-secondary';
+                    }
+                    document.getElementById('riskPrediction').textContent = 'Prediction unavailable.';
+                    document.getElementById('riskIndicators').textContent = `Error: ${errMsg}`;
+                    const heartDiseaseResultsBox = document.getElementById('heartDiseaseResults');
+                    if (heartDiseaseResultsBox) {
+                        heartDiseaseResultsBox.innerHTML =
+                            `<div class="alert alert-danger"><strong>Prediction unavailable.</strong><br>${errMsg}</div>`;
+                    }
+                    return;
+                }
+
                 const result = await response.json();
 
                 loading.style.display = 'none';
                 resultBox.style.display = 'block';
 
-                // ERROR HANDLING: if the backend returned a non-200 response
-                // or an error payload, NEVER show "Low Risk" (which would
-                // happen because result.prediction is undefined -> falsy).
-                // Instead show a clear error message with the backend error.
-                if (!response.ok || result.error || result.prediction === undefined) {
-                    const errMsg = result.error || `Request failed (HTTP ${response.status})`;
+                // Check for error payload in a 200 response
+                if (result.error || result.prediction === undefined) {
+                    const errMsg = result.error || 'Unexpected response format';
                     const progressBar = document.getElementById('riskProgress');
-                    progressBar.style.width = '0%';
-                    progressBar.textContent = 'N/A';
-                    progressBar.className = 'progress-bar bg-secondary';
-                    document.getElementById('riskPrediction').textContent =
-                        'Prediction unavailable. Model failed to load.';
-                    document.getElementById('riskIndicators').textContent =
-                        `Error: ${errMsg}`;
+                    if (progressBar) {
+                        progressBar.style.width = '0%';
+                        progressBar.textContent = 'N/A';
+                        progressBar.className = 'progress-bar bg-secondary';
+                    }
+                    document.getElementById('riskPrediction').textContent = 'Prediction unavailable.';
+                    document.getElementById('riskIndicators').textContent = `Error: ${errMsg}`;
                     const heartDiseaseResultsBox = document.getElementById('heartDiseaseResults');
                     if (heartDiseaseResultsBox) {
                         heartDiseaseResultsBox.innerHTML =
-                            `<div class="alert alert-danger"><strong>Prediction unavailable.</strong> Model failed to load.<br>Error: ${errMsg}</div>`;
+                            `<div class="alert alert-danger"><strong>Prediction unavailable.</strong><br>${errMsg}</div>`;
                     }
                     return;
                 }

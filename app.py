@@ -388,87 +388,199 @@ def emergency():
 @app.route('/analyze_heart', methods=['POST'])
 @login_required
 def analyze_heart():
-    try:
-        data = request.get_json(silent=True) or {}
-        logger.info(f"Received heart data: {data}")
+    """Heart disease risk analysis endpoint with full instrumentation.
 
-        # Validate all required fields are present
+    Logs every stage (started/completed/time) and returns structured JSON
+    errors with stage info instead of crashing or returning HTML.
+    """
+    import time as _time
+    import traceback as _tb
+    t0 = _time.time()
+
+    def _log_stage(stage, start_t):
+        elapsed = _time.time() - start_t
+        logger.info(f"[analyze_heart] {stage} completed in {elapsed:.3f}s")
+
+    try:
+        # ---- Stage 1: Request received ----
+        logger.info(f"[analyze_heart] Stage 1: Request received from user_id={session.get('user_id')}")
+        data = request.get_json(silent=True) or {}
+        logger.info(f"[analyze_heart] Incoming data: {data}")
+
+        # ---- Stage 2: Input validation ----
+        t1 = _time.time()
         required = ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg',
                     'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal']
-        missing = [f for f in required if f not in data or data[f] == '']
+        missing = [f for f in required if f not in data or data[f] == '' or data[f] is None]
         if missing:
-            return jsonify({'error': f'Missing required fields: {", ".join(missing)}'}), 400
+            logger.error(f"[analyze_heart] Stage 2 FAILED: missing fields: {missing}")
+            return jsonify({
+                'success': False,
+                'stage': 'Input Validation',
+                'error': f'Missing required fields: {", ".join(missing)}'
+            }), 400
 
-        # Ensure models are loaded lazily
-        load_heart_and_ecg_models()
+        # Parse values (browser sends strings, convert to proper types)
+        parsed = {}
+        try:
+            parsed['age'] = float(data['age'])
+            parsed['sex'] = int(data['sex'])
+            parsed['cp'] = int(data['cp'])
+            parsed['trestbps'] = float(data['trestbps'])
+            parsed['chol'] = float(data['chol'])
+            parsed['fbs'] = int(data['fbs'])
+            parsed['restecg'] = int(data['restecg'])
+            parsed['thalach'] = float(data['thalach'])
+            parsed['exang'] = int(data['exang'])
+            parsed['oldpeak'] = float(data['oldpeak'])
+            parsed['slope'] = int(data['slope'])
+            parsed['ca'] = int(data['ca'])
+            parsed['thal'] = int(data['thal'])
+        except (ValueError, TypeError) as ve:
+            logger.error(f"[analyze_heart] Stage 2 FAILED: type conversion error: {ve}")
+            return jsonify({
+                'success': False,
+                'stage': 'Input Validation',
+                'error': f'Invalid field value: {str(ve)}'
+            }), 400
+        logger.info(f"[analyze_heart] Stage 2: Input validated. Parsed: {parsed}")
+        _log_stage("Stage 2 (Input Validation)", t1)
 
-        input_data = pd.DataFrame([{
-            'age': float(data['age']),
-            'sex': int(data['sex']),
-            'cp': int(data['cp']),
-            'trestbps': float(data['trestbps']),
-            'chol': float(data['chol']),
-            'fbs': int(data['fbs']),
-            'restecg': int(data['restecg']),
-            'thalach': float(data['thalach']),
-            'exang': int(data['exang']),
-            'oldpeak': float(data['oldpeak']),
-            'slope': int(data['slope']),
-            'ca': int(data['ca']),
-            'thal': int(data['thal'])
-        }])
-        
-        input_scaled = heart_scaler.transform(input_data)
-        probabilities = heart_model.predict_proba(input_scaled)[0]
-        risk_probability = probabilities[1]
-        
-        # Risk indicators analysis
+        # ---- Stage 3: Model verification + loading ----
+        t2 = _time.time()
+        heart_model_path = os.path.join(BASE_DIR, 'heart/models/heart_model.joblib')
+        heart_scaler_path = os.path.join(BASE_DIR, 'heart/models/heart_scaler.joblib')
+
+        if not os.path.exists(heart_model_path):
+            logger.error(f"[analyze_heart] Stage 3 FAILED: heart_model.joblib not found at {heart_model_path}")
+            return jsonify({
+                'success': False,
+                'stage': 'Model Loading',
+                'error': f'Heart model file not found: {heart_model_path}'
+            }), 500
+        if not os.path.exists(heart_scaler_path):
+            logger.error(f"[analyze_heart] Stage 3 FAILED: heart_scaler.joblib not found at {heart_scaler_path}")
+            return jsonify({
+                'success': False,
+                'stage': 'Model Loading',
+                'error': f'Heart scaler file not found: {heart_scaler_path}'
+            }), 500
+
+        logger.info(f"[analyze_heart] Stage 3: Model files exist. heart_model={os.path.getsize(heart_model_path)} bytes, "
+                     f"heart_scaler={os.path.getsize(heart_scaler_path)} bytes")
+
+        global heart_model, heart_scaler
+        try:
+            if heart_model is None:
+                logger.info("[analyze_heart] Stage 3: Loading heart_model (first time)...")
+                heart_model = joblib.load(heart_model_path)
+                logger.info(f"[analyze_heart] Stage 3: Heart model loaded: {type(heart_model).__name__}")
+            if heart_scaler is None:
+                logger.info("[analyze_heart] Stage 3: Loading heart_scaler (first time)...")
+                heart_scaler = joblib.load(heart_scaler_path)
+                logger.info(f"[analyze_heart] Stage 3: Heart scaler loaded: {type(heart_scaler).__name__}")
+        except Exception as me:
+            logger.error(f"[analyze_heart] Stage 3 FAILED: model load error:\n{_tb.format_exc()}")
+            return jsonify({
+                'success': False,
+                'stage': 'Model Loading',
+                'error': f'Failed to load model: {str(me)}',
+                'traceback': _tb.format_exc() if DEBUG_MODE else None
+            }), 500
+        _log_stage("Stage 3 (Model Loading)", t2)
+
+        # ---- Stage 4: Feature extraction ----
+        t3 = _time.time()
+        try:
+            input_data = pd.DataFrame([parsed])
+            logger.info(f"[analyze_heart] Stage 4: Feature vector shape={input_data.shape}, columns={list(input_data.columns)}")
+        except Exception as fe:
+            logger.error(f"[analyze_heart] Stage 4 FAILED:\n{_tb.format_exc()}")
+            return jsonify({
+                'success': False,
+                'stage': 'Feature Extraction',
+                'error': f'Failed to build feature vector: {str(fe)}'
+            }), 500
+        _log_stage("Stage 4 (Feature Extraction)", t3)
+
+        # ---- Stage 5: Scaler transform + prediction ----
+        t4 = _time.time()
+        try:
+            input_scaled = heart_scaler.transform(input_data)
+            logger.info(f"[analyze_heart] Stage 5: Scaled vector shape={input_scaled.shape}")
+            probabilities = heart_model.predict_proba(input_scaled)[0]
+            risk_probability = float(probabilities[1])
+            logger.info(f"[analyze_heart] Stage 5: Prediction complete. probabilities={probabilities}, risk_prob={risk_probability:.4f}")
+        except Exception as pe:
+            logger.error(f"[analyze_heart] Stage 5 FAILED:\n{_tb.format_exc()}")
+            return jsonify({
+                'success': False,
+                'stage': 'Prediction',
+                'error': f'Failed to predict: {str(pe)}',
+                'traceback': _tb.format_exc() if DEBUG_MODE else None
+            }), 500
+        _log_stage("Stage 5 (Prediction)", t4)
+
+        # ---- Stage 6: Risk indicators ----
+        t5 = _time.time()
         high_risk_indicators = sum([
-            float(data['age']) >= 65,
-            float(data['trestbps']) >= 180,
-            float(data['chol']) >= 300,
-            int(data['restecg']) == 2,
-            float(data['oldpeak']) >= 2.0,
-            int(data['ca']) >= 2,
-            int(data['thal']) >= 2
+            parsed['age'] >= 65,
+            parsed['trestbps'] >= 180,
+            parsed['chol'] >= 300,
+            parsed['restecg'] == 2,
+            parsed['oldpeak'] >= 2.0,
+            parsed['ca'] >= 2,
+            parsed['thal'] >= 2
         ])
-        
         low_risk_indicators = sum([
-            float(data['age']) < 45,
-            int(data['sex']) == 0,
-            float(data['trestbps']) < 120,
-            float(data['chol']) < 200,
-            int(data['restecg']) == 0,
-            float(data['oldpeak']) < 1.0,
-            int(data['ca']) == 0,
-            int(data['thal']) == 0,
-            int(data['exang']) == 0,
-            int(data['slope']) == 0
+            parsed['age'] < 45,
+            parsed['sex'] == 0,
+            parsed['trestbps'] < 120,
+            parsed['chol'] < 200,
+            parsed['restecg'] == 0,
+            parsed['oldpeak'] < 1.0,
+            parsed['ca'] == 0,
+            parsed['thal'] == 0,
+            parsed['exang'] == 0,
+            parsed['slope'] == 0
         ])
-        
+
         if low_risk_indicators >= 5:
             risk_probability = min(risk_probability, 0.3)
         elif high_risk_indicators >= 3:
             risk_probability = max(risk_probability, 0.7)
-        
+
         threshold = 0.5
         if low_risk_indicators >= 5:
             threshold = 0.6
         elif high_risk_indicators >= 3:
             threshold = 0.4
-        
+
         prediction = risk_probability > threshold
-        
-        return jsonify({
+        logger.info(f"[analyze_heart] Stage 6: high={high_risk_indicators}, low={low_risk_indicators}, "
+                     f"threshold={threshold}, prediction={prediction}, prob={risk_probability:.4f}")
+        _log_stage("Stage 6 (Risk Indicators)", t5)
+
+        # ---- Stage 7: JSON response ----
+        result = {
+            'success': True,
             'prediction': bool(prediction),
             'probability': float(risk_probability),
             'high_risk_indicators': int(high_risk_indicators),
             'low_risk_indicators': int(low_risk_indicators)
-        })
-        
+        }
+        logger.info(f"[analyze_heart] Stage 7: Returning response: {result}")
+        _log_stage("Stage 7 (Response)", t0)
+        return jsonify(result)
+
     except Exception as e:
-        logger.error(f"Error in heart analysis: {str(e)}")
-        return jsonify({'error': str(e)}), 400
+        logger.error(f"[analyze_heart] UNHANDLED EXCEPTION:\n{_tb.format_exc()}")
+        return jsonify({
+            'success': False,
+            'stage': 'Unhandled',
+            'error': str(e),
+            'traceback': _tb.format_exc() if DEBUG_MODE else None
+        }), 500
 
 @app.route('/analyze_ecg', methods=['POST'])
 @login_required
@@ -1393,121 +1505,99 @@ Format the response in clear, professional medical language.
 Avoid using markdown symbols (*, **) or bullet points.
 Write in a formal, clinical tone appropriate for a medical report.""".format(test_results='\n\n'.join(test_results))
 
-        # Use direct API call to Gemini API
-        api_key = os.environ["GOOGLE_API_KEY"]
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-        
-        headers = {
-            "Content-Type": "application/json"
+        # Use the official google-genai SDK (same as /ai_doctor) with a timeout.
+        # The old code used a raw REST call to generativelanguage.googleapis.com
+        # with no timeout, which caused gunicorn worker timeouts (502) on Render.
+        try:
+            client = _get_gemini_client()
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    temperature=0.7,
+                    top_p=0.95,
+                    top_k=40,
+                    max_output_tokens=1024,
+                ),
+            )
+            analysis_text = (response.text or "").strip()
+            if not analysis_text:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'AI analysis returned empty response. Please try again.'
+                }), 500
+        except Exception as gemini_err:
+            logger.error(f"[generate_analysis] Gemini call failed: {str(gemini_err)[:200]}")
+            return jsonify({
+                'status': 'error',
+                'message': f'AI analysis unavailable: {str(gemini_err)[:100]}'
+            }), 500
+        # Split the analysis text into sections
+        sections = {
+            'summary': '',
+            'concerns': '',
+            'recommendations': '',
+            'lifestyle': '',
+            'emergency': ''
         }
-        
-        data = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": prompt
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0.7,
-                "topK": 40,
-                "topP": 0.95,
-                "maxOutputTokens": 1024
-            }
+
+        def extract_section(text, start_marker, end_marker=None):
+            try:
+                if end_marker:
+                    return text.split(start_marker)[1].split(end_marker)[0].strip()
+                return text.split(start_marker)[1].strip()
+            except IndexError:
+                return "No information available"
+
+        sections['summary'] = extract_section(analysis_text, '1. Summary of Findings:', '2. Potential Health Concerns:')
+        sections['concerns'] = extract_section(analysis_text, '2. Potential Health Concerns:', '3. Recommendations for Follow-up:')
+        sections['recommendations'] = extract_section(analysis_text, '3. Recommendations for Follow-up:', '4. Lifestyle Suggestions:')
+        sections['lifestyle'] = extract_section(analysis_text, '4. Lifestyle Suggestions:', '5. When to Seek Immediate Medical Attention:')
+        sections['emergency'] = extract_section(analysis_text, '5. When to Seek Immediate Medical Attention:')
+
+        # Format the response with proper HTML structure
+        formatted_response = f"""
+        <div class="analysis-section">
+            <div class="report-header">
+                <h3>Medical Analysis Report</h3>
+                <p class="report-date">{datetime.now().strftime('%B %d, %Y')}</p>
+            </div>
+            <div class="report-section">
+                <h4>Summary of Findings</h4>
+                <p>{sections['summary']}</p>
+            </div>
+            <div class="report-section">
+                <h4>Potential Health Concerns</h4>
+                <p>{sections['concerns']}</p>
+            </div>
+            <div class="report-section">
+                <h4>Recommendations for Follow-up</h4>
+                <p>{sections['recommendations']}</p>
+            </div>
+            <div class="report-section">
+                <h4>Lifestyle Suggestions</h4>
+                <p>{sections['lifestyle']}</p>
+            </div>
+            <div class="report-section">
+                <h4>When to Seek Immediate Medical Attention</h4>
+                <p>{sections['emergency']}</p>
+            </div>
+        </div>
+        """
+
+        # Store the analysis data in the session
+        session['latest_analysis'] = {
+            'analysis': formatted_response,
+            'timestamp': datetime.now().isoformat()
         }
-        
-        response = requests.post(url, headers=headers, json=data)
-        response_data = response.json()
-        
-        if 'candidates' in response_data and len(response_data['candidates']) > 0:
-            if 'content' in response_data['candidates'][0]:
-                if 'parts' in response_data['candidates'][0]['content']:
-                    if len(response_data['candidates'][0]['content']['parts']) > 0:
-                        if 'text' in response_data['candidates'][0]['content']['parts'][0]:
-                            analysis_text = response_data['candidates'][0]['content']['parts'][0]['text']
-                            
-                            # Split the analysis text into sections
-                            sections = {
-                                'summary': '',
-                                'concerns': '',
-                                'recommendations': '',
-                                'lifestyle': '',
-                                'emergency': ''
-                            }
-                            
-                            # Helper function to extract section content
-                            def extract_section(text, start_marker, end_marker=None):
-                                try:
-                                    if end_marker:
-                                        return text.split(start_marker)[1].split(end_marker)[0].strip()
-                                    return text.split(start_marker)[1].strip()
-                                except IndexError:
-                                    return "No information available"
-                            
-                            # Extract each section
-                            sections['summary'] = extract_section(analysis_text, '1. Summary of Findings:', '2. Potential Health Concerns:')
-                            sections['concerns'] = extract_section(analysis_text, '2. Potential Health Concerns:', '3. Recommendations for Follow-up:')
-                            sections['recommendations'] = extract_section(analysis_text, '3. Recommendations for Follow-up:', '4. Lifestyle Suggestions:')
-                            sections['lifestyle'] = extract_section(analysis_text, '4. Lifestyle Suggestions:', '5. When to Seek Immediate Medical Attention:')
-                            sections['emergency'] = extract_section(analysis_text, '5. When to Seek Immediate Medical Attention:')
-                            
-                            # Format the response with proper HTML structure
-                            formatted_response = f"""
-                            <div class="analysis-section">
-                                <div class="report-header">
-                                    <h3>Medical Analysis Report</h3>
-                                    <p class="report-date">{datetime.now().strftime('%B %d, %Y')}</p>
-                                </div>
-                                
-                                <div class="report-section">
-                                    <h4>Summary of Findings</h4>
-                                    <p>{sections['summary']}</p>
-                                </div>
-                                
-                                <div class="report-section">
-                                    <h4>Potential Health Concerns</h4>
-                                    <p>{sections['concerns']}</p>
-                                </div>
-                                
-                                <div class="report-section">
-                                    <h4>Recommendations for Follow-up</h4>
-                                    <p>{sections['recommendations']}</p>
-                                </div>
-                                
-                                <div class="report-section">
-                                    <h4>Lifestyle Suggestions</h4>
-                                    <p>{sections['lifestyle']}</p>
-                                </div>
-                                
-                                <div class="report-section">
-                                    <h4>When to Seek Immediate Medical Attention</h4>
-                                    <p>{sections['emergency']}</p>
-                                </div>
-                            </div>
-                            """
-                            
-                            # Store the analysis data in the session
-                            session['latest_analysis'] = {
-                                'analysis': formatted_response,
-                                'timestamp': datetime.now().isoformat()
-                            }
-                            
-                            return jsonify({
-                                'status': 'success',
-                                'analysis': formatted_response
-                            })
-        
-        # Fallback response if the API call fails
+
         return jsonify({
-            'status': 'error',
-            'message': 'Failed to generate analysis'
-        }), 500
+            'status': 'success',
+            'analysis': formatted_response
+        })
         
     except Exception as e:
-        print(f"Error in generate_analysis: {str(e)}")
+        logger.error(f"Error in generate_analysis: {str(e)}", exc_info=True)
         return jsonify({
             'status': 'error',
             'message': str(e)
@@ -1621,6 +1711,15 @@ def download_report():
         logger.error(f"Error downloading report: {str(e)}")
         return jsonify({'error': 'Failed to download report'}), 500
 
+
+# Preload ML models at module import time (runs under gunicorn --preload).
+# This avoids the first-request timeout (502) caused by lazy-loading
+# TensorFlow + PyTorch + models on Render's free tier.
+logger.info("Preloading heart disease + ECG models at startup...")
+try:
+    load_heart_and_ecg_models()
+except Exception as e:
+    logger.warning(f"Heart/ECG model preload failed (will retry on first request): {e}")
 
 if __name__ == '__main__':
     # Local development entry point.
