@@ -33,22 +33,10 @@ requirements_clean.txt
 requirements_final.txt
 run_install.sh
 
-# Large model files (to be downloaded from Google Drive)
-ecg project/best_model.pth
-heart/models/audio_model.h5
-archive/variables/variables.data-00000-of-00001
-archive/saved_model.pb
-*.h5
-*.pb
-*.pth
-*.joblib
-**/archive/saved_model.pb
-**/heart/models/audio_model.h5
-**/ecg project/best_model.pth
-
-# Exception for smaller model files that should be tracked
-# These will be committed separately if needed
-
-
 # Generated reports
 reports/*.pdf
+
+# NOTE: Model files (*.joblib, *.h5, *.pth, *.pb, variables.data) ARE tracked
+# in this repo (total ~60 MB, largest file 31 MB — all under GitHub's 100 MB
+# limit). They are committed directly so the app works out of the box on any
+# host without needing a separate download step.
