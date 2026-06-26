@@ -894,6 +894,122 @@ def handle_emergency_contacts():
             logger.error(f"Error removing contact: {str(e)}")
             return jsonify({'error': 'Failed to remove contact'}), 500
 
+# ---------------------------------------------------------------------------
+# Medical info (medications + allergies) — Neon-backed
+# ---------------------------------------------------------------------------
+@app.route('/api/medical_info', methods=['GET', 'PUT'])
+@login_required
+def handle_medical_info():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    if request.method == 'GET':
+        try:
+            row = db_neon.get_medical_info(user_id)
+            if row:
+                return jsonify({
+                    'medications': row.get('medications') or '',
+                    'allergies': row.get('allergies') or '',
+                })
+            return jsonify({'medications': '', 'allergies': ''})
+        except Exception as e:
+            logger.error(f"Error getting medical info: {str(e)}")
+            return jsonify({'error': 'Failed to get medical info'}), 500
+
+    if request.method == 'PUT':
+        try:
+            data = request.get_json(silent=True) or {}
+            medications = data.get('medications', '')
+            allergies = data.get('allergies', '')
+            db_neon.upsert_medical_info(user_id, medications=medications, allergies=allergies)
+            logger.info(f"Medical info saved for user {user_id}")
+            return jsonify({'status': 'success'})
+        except Exception as e:
+            logger.error(f"Error saving medical info: {str(e)}")
+            return jsonify({'error': 'Failed to save medical info'}), 500
+
+# ---------------------------------------------------------------------------
+# Medical records (uploaded files) — Neon-backed
+# ---------------------------------------------------------------------------
+@app.route('/api/medical_records', methods=['GET', 'POST'])
+@login_required
+def handle_medical_records():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    if request.method == 'GET':
+        try:
+            rows = db_neon.list_medical_records(user_id)
+            # Serialize datetimes + ids for JSON
+            records = []
+            for r in rows:
+                records.append({
+                    'id': str(r['id']),
+                    'name': r['name'],
+                    'type': r.get('type') or '',
+                    'uploaded_at': r['uploaded_at'].isoformat() if r.get('uploaded_at') else None,
+                })
+            return jsonify({'records': records})
+        except Exception as e:
+            logger.error(f"Error listing medical records: {str(e)}")
+            return jsonify({'error': 'Failed to list medical records'}), 500
+
+    if request.method == 'POST':
+        try:
+            data = request.get_json(silent=True) or {}
+            name = data.get('name')
+            type_ = data.get('type', '')
+            content = data.get('content', '')
+            if not name:
+                return jsonify({'error': 'Record name is required'}), 400
+            row = db_neon.insert_medical_record(user_id, name=name, type_=type_, content=content)
+            logger.info(f"Medical record '{name}' uploaded for user {user_id}")
+            return jsonify({
+                'status': 'success',
+                'id': str(row['id']),
+                'name': row['name'],
+                'uploaded_at': row['uploaded_at'].isoformat() if row.get('uploaded_at') else None,
+            })
+        except Exception as e:
+            logger.error(f"Error uploading medical record: {str(e)}")
+            return jsonify({'error': 'Failed to upload medical record'}), 500
+
+@app.route('/api/medical_records/<record_id>', methods=['GET', 'DELETE'])
+@login_required
+def handle_medical_record(record_id):
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    if request.method == 'GET':
+        try:
+            row = db_neon.get_medical_record(record_id, user_id)
+            if not row:
+                return jsonify({'error': 'Record not found'}), 404
+            return jsonify({
+                'id': str(row['id']),
+                'name': row['name'],
+                'type': row.get('type') or '',
+                'content': row.get('content') or '',
+                'uploaded_at': row['uploaded_at'].isoformat() if row.get('uploaded_at') else None,
+            })
+        except Exception as e:
+            logger.error(f"Error getting medical record: {str(e)}")
+            return jsonify({'error': 'Failed to get medical record'}), 500
+
+    if request.method == 'DELETE':
+        try:
+            deleted = db_neon.delete_medical_record(record_id, user_id)
+            if not deleted:
+                return jsonify({'error': 'Record not found'}), 404
+            logger.info(f"Medical record {record_id} deleted for user {user_id}")
+            return jsonify({'status': 'success'})
+        except Exception as e:
+            logger.error(f"Error deleting medical record: {str(e)}")
+            return jsonify({'error': 'Failed to delete medical record'}), 500
+
 @app.route('/emergency_map')
 def emergency_map():
     if not session.get('user'):

@@ -265,3 +265,103 @@ def delete_emergency_contact(contact_id, user_id):
     with get_conn() as cur:
         cur.execute(sql, params)
         return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# medical_info (one row per user: medications, allergies)
+# ---------------------------------------------------------------------------
+
+def upsert_medical_info(user_id, medications=None, allergies=None):
+    """Insert or update the user's medical info row. Returns the row."""
+    uid = _parse_uuid(user_id)
+    with get_conn() as cur:
+        # Ensure the user row exists (FK requirement).
+        cur.execute(
+            "INSERT INTO users (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+            (uid,),
+        )
+        cur.execute(
+            """
+            INSERT INTO medical_info (user_id, medications, allergies)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE
+              SET medications = EXCLUDED.medications,
+                  allergies = EXCLUDED.allergies,
+                  updated_at = NOW()
+            RETURNING id, user_id, medications, allergies, updated_at
+            """,
+            (uid, medications, allergies),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def get_medical_info(user_id):
+    """Return the user's medical info row, or None."""
+    uid = _parse_uuid(user_id)
+    with get_conn() as cur:
+        cur.execute(
+            "SELECT id, user_id, medications, allergies, updated_at "
+            "FROM medical_info WHERE user_id = %s",
+            (uid,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# medical_records (uploaded files: name, type, content)
+# ---------------------------------------------------------------------------
+
+def insert_medical_record(user_id, name, type_=None, content=None):
+    """Insert a medical record. Returns the new row (without content to keep
+    it light for list views — use get_medical_record for the full content)."""
+    uid = _parse_uuid(user_id)
+    with get_conn() as cur:
+        cur.execute(
+            "INSERT INTO users (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+            (uid,),
+        )
+        cur.execute(
+            "INSERT INTO medical_records (user_id, name, type, content) "
+            "VALUES (%s, %s, %s, %s) "
+            "RETURNING id, user_id, name, type, uploaded_at",
+            (uid, name, type_, content),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def list_medical_records(user_id):
+    """Return all medical records for a user (metadata only, no content)."""
+    uid = _parse_uuid(user_id)
+    with get_conn() as cur:
+        cur.execute(
+            "SELECT id, user_id, name, type, uploaded_at "
+            "FROM medical_records WHERE user_id = %s ORDER BY uploaded_at DESC",
+            (uid,),
+        )
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_medical_record(record_id, user_id):
+    """Return a single medical record (including content) owned by user_id."""
+    with get_conn() as cur:
+        cur.execute(
+            "SELECT id, user_id, name, type, content, uploaded_at "
+            "FROM medical_records WHERE id = %s AND user_id = %s",
+            (_parse_uuid(record_id), _parse_uuid(user_id)),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def delete_medical_record(record_id, user_id):
+    """Delete a medical record owned by user_id. Returns True if deleted."""
+    with get_conn() as cur:
+        cur.execute(
+            "DELETE FROM medical_records WHERE id = %s AND user_id = %s",
+            (_parse_uuid(record_id), _parse_uuid(user_id)),
+        )
+        return cur.rowcount > 0

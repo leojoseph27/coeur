@@ -689,36 +689,75 @@
 
     async function loadUserData() {
         try {
-            // Load emergency contacts from Neon via the backend API
-            const response = await fetch('/api/emergency_contacts');
-            if (!response.ok) {
-                console.warn('Could not load emergency contacts (HTTP ' + response.status + ')');
-                return;
+            // Load emergency contacts from Neon
+            const contactsResp = await fetch('/api/emergency_contacts');
+            if (contactsResp.ok) {
+                const data = await contactsResp.json();
+                const contacts = data.contacts || {};
+                const contactsDiv = document.getElementById('emergencyContacts');
+                const addButton = document.getElementById('addContact');
+                if (contactsDiv && addButton) {
+                    contactsDiv.innerHTML = '';
+                    contactsDiv.appendChild(addButton);
+                    Object.entries(contacts).forEach(([id, info]) => {
+                        const contactElement = document.createElement('div');
+                        contactElement.className = 'contact-item';
+                        contactElement.dataset.contactId = id;
+                        contactElement.innerHTML = `
+                            <div class="contact-info">
+                                <div class="contact-name">${info.name}</div>
+                                <div class="contact-phone">${info.phone}</div>
+                            </div>
+                            <div class="contact-actions">
+                                <button onclick="callContact('${info.phone}')" title="Call"><i class="fas fa-phone"></i></button>
+                                <button onclick="removeContact('${id}')" title="Remove"><i class="fas fa-trash"></i></button>
+                            </div>
+                        `;
+                        contactsDiv.insertBefore(contactElement, addButton);
+                    });
+                }
             }
-            const data = await response.json();
-            const contacts = data.contacts || {};
-            const contactsDiv = document.getElementById('emergencyContacts');
-            const addButton = document.getElementById('addContact');
-            if (!contactsDiv || !addButton) return;
-            contactsDiv.innerHTML = '';
-            contactsDiv.appendChild(addButton);
 
-            Object.entries(contacts).forEach(([id, info]) => {
-                const contactElement = document.createElement('div');
-                contactElement.className = 'contact-item';
-                contactElement.dataset.contactId = id;
-                contactElement.innerHTML = `
-                    <div class="contact-info">
-                        <div class="contact-name">${info.name}</div>
-                        <div class="contact-phone">${info.phone}</div>
-                    </div>
-                    <div class="contact-actions">
-                        <button onclick="callContact('${info.phone}')" title="Call"><i class="fas fa-phone"></i></button>
-                        <button onclick="removeContact('${id}')" title="Remove"><i class="fas fa-trash"></i></button>
-                    </div>
-                `;
-                contactsDiv.insertBefore(contactElement, addButton);
-            });
+            // Load medical info (medications + allergies) from Neon
+            const medResp = await fetch('/api/medical_info');
+            if (medResp.ok) {
+                const medData = await medResp.json();
+                const medsEl = document.getElementById('currentMedications');
+                const allergiesEl = document.getElementById('allergies');
+                if (medsEl) medsEl.value = medData.medications || '';
+                if (allergiesEl) allergiesEl.value = medData.allergies || '';
+            }
+
+            // Load medical records from Neon
+            const recordsResp = await fetch('/api/medical_records');
+            if (recordsResp.ok) {
+                const recData = await recordsResp.json();
+                const records = recData.records || [];
+                const recordsList = document.getElementById('medicalRecordsList');
+                if (recordsList) {
+                    recordsList.innerHTML = '';
+                    records.forEach((record) => {
+                        const recordElement = document.createElement('div');
+                        recordElement.className = 'record-item';
+                        recordElement.dataset.recordId = record.id;
+                        const dateStr = record.uploaded_at
+                            ? new Date(record.uploaded_at).toLocaleDateString()
+                            : '';
+                        recordElement.innerHTML = `
+                            <div class="record-info">
+                                <div class="record-name">${record.name}</div>
+                                <div class="record-date">${dateStr}</div>
+                            </div>
+                            <div class="record-actions">
+                                <button onclick="viewRecord('${record.id}')" title="View"><i class="fas fa-eye"></i></button>
+                                <button onclick="downloadRecord('${record.id}')" title="Download"><i class="fas fa-download"></i></button>
+                                <button onclick="removeRecord('${record.id}')" title="Remove"><i class="fas fa-trash"></i></button>
+                            </div>
+                        `;
+                        recordsList.appendChild(recordElement);
+                    });
+                }
+            }
         } catch (error) {
             console.error('Error loading user data:', error);
         }
@@ -1196,11 +1235,19 @@
     });
 
     async function saveMedicalInfo(medications, allergies) {
-        // Medical info storage is not yet wired to Neon (no medical_info table).
-        // Storing locally for now so the user doesn't lose entered data.
+        // Save medical info to Neon via the /api/medical_info PUT endpoint.
         try {
-            localStorage.setItem('medicalInfo', JSON.stringify({ medications, allergies }));
-            alert('Medical information saved locally');
+            const response = await fetch('/api/medical_info', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ medications: medications, allergies: allergies })
+            });
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                alert(err.error || 'Error saving medical information. Please try again.');
+                return;
+            }
+            alert('Medical information saved successfully');
             document.getElementById('medicalForm').style.display = 'none';
         } catch (error) {
             console.error('Error saving medical info:', error);
@@ -1209,20 +1256,132 @@
     }
 
     async function uploadMedicalRecord(file) {
-        // Medical records upload is not yet wired to Neon (no medical_records table).
-        alert('Medical record upload is coming soon. This feature is not yet available.');
+        // Upload a medical record to Neon via /api/medical_records POST.
+        // The file content is read and sent as JSON (text or base64 for PDFs).
+        try {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    let content = e.target.result;
+                    // For PDFs, e.target.result is a data URL (base64); store as-is.
+                    // For text files, e.target.result is the text content.
+                    const response = await fetch('/api/medical_records', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: file.name,
+                            type: file.type || 'application/octet-stream',
+                            content: content
+                        })
+                    });
+                    if (!response.ok) {
+                        const err = await response.json().catch(() => ({}));
+                        alert(err.error || 'Error uploading medical record. Please try again.');
+                        return;
+                    }
+                    alert('Medical record uploaded successfully');
+                    loadUserData();  // Refresh the records list
+                } catch (error) {
+                    console.error('Error uploading record:', error);
+                    alert('Error uploading medical record. Please try again.');
+                }
+            };
+            // Read PDFs as data URLs (base64), other files as text
+            if (file.type === 'application/pdf') {
+                reader.readAsDataURL(file);
+            } else {
+                reader.readAsText(file);
+            }
+        } catch (error) {
+            console.error('Error uploading record:', error);
+            alert('Error uploading medical record. Please try again.');
+        }
     }
 
     async function viewRecord(recordId) {
-        alert('Medical record viewing is coming soon. This feature is not yet available.');
+        // Fetch the full record (including content) from Neon and show in a modal.
+        try {
+            const response = await fetch('/api/medical_records/' + recordId);
+            if (!response.ok) {
+                alert('Error viewing record. Please try again.');
+                return;
+            }
+            const record = await response.json();
+            const modal = document.createElement('div');
+            modal.className = 'modal';
+            let content;
+            if (record.type === 'application/pdf' && record.content && record.content.startsWith('data:')) {
+                content = `<iframe src="${record.content}" width="100%" height="500px" style="border: none;"></iframe>`;
+            } else {
+                content = `<pre style="white-space: pre-wrap; word-wrap: break-word;">${(record.content || '').replace(/</g, '&lt;')}</pre>`;
+            }
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <h3>${record.name}</h3>
+                    <div class="record-content">${content}</div>
+                    <div class="modal-buttons">
+                        <button class="emergency-button" onclick="this.closest('.modal').remove()">Close</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        } catch (error) {
+            console.error('Error viewing record:', error);
+            alert('Error viewing record. Please try again.');
+        }
     }
 
     async function removeRecord(recordId) {
-        alert('Medical record management is coming soon. This feature is not yet available.');
+        if (!confirm('Are you sure you want to remove this record?')) return;
+        try {
+            const response = await fetch('/api/medical_records/' + recordId, { method: 'DELETE' });
+            if (!response.ok) {
+                alert('Error removing record. Please try again.');
+                return;
+            }
+            alert('Record removed successfully');
+            loadUserData();  // Refresh the records list
+        } catch (error) {
+            console.error('Error removing record:', error);
+            alert('Error removing record. Please try again.');
+        }
     }
 
     async function downloadRecord(recordId) {
-        alert('Medical record download is coming soon. This feature is not yet available.');
+        // Fetch the record content from Neon and trigger a browser download.
+        try {
+            const response = await fetch('/api/medical_records/' + recordId);
+            if (!response.ok) {
+                alert('Error downloading record. Please try again.');
+                return;
+            }
+            const record = await response.json();
+            // If it's a PDF stored as a data URL, the content is already base64
+            if (record.type === 'application/pdf' && record.content && record.content.startsWith('data:')) {
+                // Convert data URL to blob
+                const res = await fetch(record.content);
+                const blob = await res.blob();
+                _downloadBlob(blob, record.name);
+            } else {
+                // Text content
+                const blob = new Blob([record.content || ''], { type: record.type || 'text/plain' });
+                _downloadBlob(blob, record.name);
+            }
+        } catch (error) {
+            console.error('Error downloading record:', error);
+            alert('Error downloading record. Please try again.');
+        }
+    }
+
+    function _downloadBlob(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     // Assign functions to window after they are defined
