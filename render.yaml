@@ -7,17 +7,12 @@ services:
     # numpy/tensorflow/torch that have no wheels for Python 3.11+.
     buildCommand: >
       python -m pip install --upgrade pip &&
-      pip install protobuf==3.20.* &&
-      pip install -r requirements.txt &&
-      pip install gdown gunicorn psycopg2-binary &&
-      python download_models.py &&
-      ls -la heart/models/ &&
-      ls -la "ecg project/"
+      pip install -r requirements.txt
     # NOTE: use sync worker (not eventlet) — eventlet's monkey-patching
     # segfaults with TensorFlow/PyTorch native libs. Flask-SocketIO runs in
     # threading async mode, which is compatible with the sync worker.
     startCommand: >
-      python -m gunicorn app:app
+      gunicorn app:app
       --bind 0.0.0.0:$PORT
       --timeout 240
       --workers 1
@@ -39,6 +34,8 @@ services:
       - key: GUNICORN_CMD_ARGS
         value: "--log-level=info"
       # Required — set these in the Render dashboard (do NOT commit secrets):
-      # - NEON_DATABASE_URL (your Neon PostgreSQL connection string)
-      # - GOOGLE_API_KEY    (your Google Gemini API key)
-      # - FLASK_SECRET_KEY  (a random secret for session signing)
+      # - NEON_DATABASE_URL  (Neon PostgreSQL connection string)
+      # - GOOGLE_API_KEY     (Google Gemini API key)
+      # - FLASK_SECRET_KEY   (random secret for session signing)
+      # Optional:
+      # - DEMO_FILES_DIR     (path to demo file storage; defaults to ./demo_files)

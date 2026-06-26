@@ -47,14 +47,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Base directory (absolute path to the repo root). Using __file__ ensures all
+# relative paths (models, templates, reports) resolve correctly regardless of
+# the current working directory — important on Render where gunicorn may be
+# started from a different CWD.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Render/hosting port (used by some environments/tools)
 PORT = int(os.environ.get("PORT", "10000"))
 
-# Create necessary directories
-os.makedirs('reports', exist_ok=True)
-os.makedirs('ecg project', exist_ok=True)
-os.makedirs('heart/models', exist_ok=True)
-os.makedirs('archive/variables', exist_ok=True)
+# Create necessary directories (absolute paths so they work on any host)
+os.makedirs(os.path.join(BASE_DIR, 'reports'), exist_ok=True)
+os.makedirs(os.path.join(BASE_DIR, 'ecg project'), exist_ok=True)
+os.makedirs(os.path.join(BASE_DIR, 'heart/models'), exist_ok=True)
+os.makedirs(os.path.join(BASE_DIR, 'archive/variables'), exist_ok=True)
 
 # Load environment variables. override=True is required because the sandbox
 # shell already exports DATABASE_URL (pointing to the Next.js SQLite db); we
@@ -68,11 +74,12 @@ DEPLOYMENT_MODE = os.environ.get('DEPLOYMENT_ENV', 'development')
 logger.info(f"Starting application in {DEPLOYMENT_MODE} mode")
 
 # Check and log missing model files without downloading at startup (keeps startup fast on Render)
+# Paths are relative to BASE_DIR so they resolve correctly on any host.
 MODEL_FILES = [
-    'ecg project/best_model.pth',
-    'heart/models/audio_model.h5',
-    'archive/saved_model.pb',
-    'archive/variables/variables.data-00000-of-00001'
+    os.path.join(BASE_DIR, 'ecg project/best_model.pth'),
+    os.path.join(BASE_DIR, 'heart/models/audio_model.h5'),
+    os.path.join(BASE_DIR, 'archive/saved_model.pb'),
+    os.path.join(BASE_DIR, 'archive/variables/variables.data-00000-of-00001'),
 ]
 
 missing_files = [fp for fp in MODEL_FILES if not os.path.exists(fp) or os.path.getsize(fp) == 0]
@@ -200,21 +207,24 @@ def load_heart_and_ecg_models():
     global heart_model, heart_scaler, ecg_model
     try:
         # Heart disease model
-        if heart_model is None and os.path.exists('heart/models/heart_model.joblib'):
-            heart_model = joblib.load('heart/models/heart_model.joblib')
+        heart_model_path = os.path.join(BASE_DIR, 'heart/models/heart_model.joblib')
+        if heart_model is None and os.path.exists(heart_model_path):
+            heart_model = joblib.load(heart_model_path)
             logger.info("Heart model loaded successfully")
-        
+
         # Heart scaler
-        if heart_scaler is None and os.path.exists('heart/models/heart_scaler.joblib'):
-            heart_scaler = joblib.load('heart/models/heart_scaler.joblib')
+        heart_scaler_path = os.path.join(BASE_DIR, 'heart/models/heart_scaler.joblib')
+        if heart_scaler is None and os.path.exists(heart_scaler_path):
+            heart_scaler = joblib.load(heart_scaler_path)
             logger.info("Heart scaler loaded successfully")
-        
-        # ECG model
-        if ecg_model is None and os.path.exists('ecg project/best_model.pth'):
+
+        # ECG model (PyTorch autoencoder)
+        ecg_model_path = os.path.join(BASE_DIR, 'ecg project/best_model.pth')
+        if ecg_model is None and os.path.exists(ecg_model_path):
             seq_len = 1
             n_features = 141
             model = Autoencoder(seq_len, n_features)
-            model.load_state_dict(torch.load('ecg project/best_model.pth', map_location=torch.device('cpu')))
+            model.load_state_dict(torch.load(ecg_model_path, map_location=torch.device('cpu')))
             model.eval()
             ecg_model = model
             logger.info("ECG model loaded successfully")
@@ -226,11 +236,13 @@ def load_audio_models():
     """Lazily load audio classification and YAMNet models."""
     global audio_model, yamnet_model
     try:
-        if audio_model is None and os.path.exists('heart/models/audio_model.h5'):
-            audio_model = tf.keras.models.load_model('heart/models/audio_model.h5')
+        audio_model_path = os.path.join(BASE_DIR, 'heart/models/audio_model.h5')
+        if audio_model is None and os.path.exists(audio_model_path):
+            audio_model = tf.keras.models.load_model(audio_model_path)
             logger.info("Audio model loaded successfully")
-        if yamnet_model is None and os.path.exists('archive/saved_model.pb'):
-            yamnet_model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'archive')
+        yamnet_pb = os.path.join(BASE_DIR, 'archive/saved_model.pb')
+        if yamnet_model is None and os.path.exists(yamnet_pb):
+            yamnet_model_path = os.path.join(BASE_DIR, 'archive')
             yamnet_model = hub.load(yamnet_model_path)
             logger.info(f"YAMNet model loaded successfully from {yamnet_model_path}")
     except Exception as e:
@@ -1501,15 +1513,15 @@ Write in a formal, clinical tone appropriate for a medical report.""".format(tes
             'message': str(e)
         }), 500
 
-# Create reports directory if it doesn't exist
-if not os.path.exists('reports'):
-    os.makedirs('reports')
+# Create reports directory if it doesn't exist (absolute path for portability)
+REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
+os.makedirs(REPORTS_DIR, exist_ok=True)
 
 def generate_pdf_report(user_id, analysis_data):
     """Generate a PDF report from the analysis data."""
     try:
         # Create a unique filename for the report
-        filename = f"reports/medical_report_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        filename = os.path.join(REPORTS_DIR, f"medical_report_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
         
         # Create the PDF document
         doc = SimpleDocTemplate(filename, pagesize=letter)
