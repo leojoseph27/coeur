@@ -1298,21 +1298,43 @@
                     },
                     body: JSON.stringify(data)
                 });
-                
+
                 const result = await response.json();
-                
+
                 loading.style.display = 'none';
                 resultBox.style.display = 'block';
-                
+
+                // ERROR HANDLING: if the backend returned a non-200 response
+                // or an error payload, NEVER show "Low Risk" (which would
+                // happen because result.prediction is undefined -> falsy).
+                // Instead show a clear error message with the backend error.
+                if (!response.ok || result.error || result.prediction === undefined) {
+                    const errMsg = result.error || `Request failed (HTTP ${response.status})`;
+                    const progressBar = document.getElementById('riskProgress');
+                    progressBar.style.width = '0%';
+                    progressBar.textContent = 'N/A';
+                    progressBar.className = 'progress-bar bg-secondary';
+                    document.getElementById('riskPrediction').textContent =
+                        'Prediction unavailable. Model failed to load.';
+                    document.getElementById('riskIndicators').textContent =
+                        `Error: ${errMsg}`;
+                    const heartDiseaseResultsBox = document.getElementById('heartDiseaseResults');
+                    if (heartDiseaseResultsBox) {
+                        heartDiseaseResultsBox.innerHTML =
+                            `<div class="alert alert-danger"><strong>Prediction unavailable.</strong> Model failed to load.<br>Error: ${errMsg}</div>`;
+                    }
+                    return;
+                }
+
                 const probability = result.probability * 100;
                 const progressBar = document.getElementById('riskProgress');
                 progressBar.style.width = `${probability}%`;
                 progressBar.textContent = `${probability.toFixed(1)}%`;
                 progressBar.className = `progress-bar ${probability > 50 ? 'bg-danger' : 'bg-success'}`;
-                
-                document.getElementById('riskPrediction').textContent = 
+
+                document.getElementById('riskPrediction').textContent =
                     `Prediction: ${result.prediction ? 'High Risk' : 'Low Risk'}`;
-                document.getElementById('riskIndicators').textContent = 
+                document.getElementById('riskIndicators').textContent =
                     `High Risk Indicators: ${result.high_risk_indicators}, Low Risk Indicators: ${result.low_risk_indicators}`;
 
                 // Update the AI Analysis tab with Heart Disease Risk results
