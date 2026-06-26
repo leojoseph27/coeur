@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: coeur
+    env: python
+    plan: free
+    buildCommand: >
+      python -m pip install --upgrade pip &&
+      pip install protobuf==3.20.* &&
+      pip install -r requirements.txt &&
+      pip install gdown pyrebase4 gunicorn reportlab eventlet &&
+      python download_models.py &&
+      ls -la heart/models/ &&
+      ls -la ecg\ project/ &&
+      ls -la archive/
+    startCommand: python -m gunicorn app:app --bind 0.0.0.0:$PORT --timeout 240 --workers 1 --threads 4 --worker-class=eventlet --preload
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.8.10
+      - key: PORT
+        value: 10000
+      - key: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION
+        value: python
+      - key: DEPLOYMENT_ENV
+        value: production
+      - key: PYTHONUNBUFFERED
+        value: "true"
+      - key: MODELS_PATH
+        value: "/opt/render/project/src"
+      - key: TF_FORCE_GPU_ALLOW_GROWTH
+        value: "true"
+      - key: TF_CPP_MIN_LOG_LEVEL
+        value: "2"
+      - key: GUNICORN_CMD_ARGS
+        value: "--log-level=debug"
+      - key: PYTHONPATH
+        value: "/opt/render/project/src"
+      - key: MAX_CONTENT_LENGTH
+        value: "16777216"

@@ -1,0 +1,5 @@
+# Disable Git LFS tracking - using Google Drive for large files instead
+*.h5 -filter=lfs -diff=lfs -merge=lfs -text
+*.pb -filter=lfs -diff=lfs -merge=lfs -text
+*.pth -filter=lfs -diff=lfs -merge=lfs -text
+*.joblib -filter=lfs -diff=lfs -merge=lfs -text
