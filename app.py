@@ -481,6 +481,7 @@ def analyze_heart():
 
         global heart_model, heart_scaler
         try:
+            import joblib  # required for joblib.load() below
             if heart_model is None:
                 logger.info("[analyze_heart] Stage 3: Loading heart_model (first time)...")
                 heart_model = joblib.load(heart_model_path)
