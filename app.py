@@ -27,7 +27,6 @@ from detecting_anomaly_in_ecg_data_using_autoencoder_with_pytorch import Autoenc
 from datetime import datetime
 import math
 import requests
-import google.generativeai as genai
 import time
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -148,16 +147,39 @@ class _RelativeLocationMiddleware:
 
 app.wsgi_app = _RelativeLocationMiddleware(app.wsgi_app)
 
-# Configure Google Gemini API
+# Configure Google Gemini API via the official google-genai SDK.
+# Uses the new GoogleGenAI client pattern:
+#   client = genai.Client(api_key=GOOGLE_API_KEY)
+#   client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+# The client is created lazily on first use so a missing/invalid key does not
+# crash app startup.
+from google import genai
+from google.genai import types as genai_types
+
+_gemini_client = None
+
+
+def _get_gemini_client():
+    """Lazily build the GoogleGenAI client from GOOGLE_API_KEY."""
+    global _gemini_client
+    if _gemini_client is not None:
+        return _gemini_client
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY not found in environment variables")
+    _gemini_client = genai.Client(api_key=api_key)
+    logger.info("GoogleGenAI client configured (model=gemini-2.5-flash)")
+    return _gemini_client
+
 try:
-    os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
-    if os.environ["GOOGLE_API_KEY"]:
-        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+    if os.getenv("GOOGLE_API_KEY"):
+        _get_gemini_client()
         logger.info("Google Gemini API configured successfully")
     else:
         logger.warning("GOOGLE_API_KEY not set. AI features will be unavailable.")
 except Exception as e:
-    logger.error(f"Failed to configure Google Gemini API: {str(e)}")
+    # Don't crash startup; the AI doctor route will surface the error per-call.
+    logger.warning(f"Gemini client init deferred: {str(e)[:200]}")
 
 heart_model = None
 audio_model = None
@@ -744,63 +766,37 @@ def generate_output(input_text):
     """
     
     try:
-        api_key = os.environ.get("GOOGLE_API_KEY", "")
-
-        # --- Primary path: Z.ai's Gemini-compatible endpoint -----------------
-        # Z.ai exposes Google's Gemini API format (v1beta generateContent) and
-        # serves the gemini-2.5-flash model. This is used instead of Google's
-        # own endpoint because Google's generativelanguage.googleapis.com is
-        # geo-blocked from this host ("User location is not supported").
-        # The GOOGLE_API_KEY (a Z.ai "AQ."-prefixed key) is sent via the
-        # x-api-key header, matching the Gemini API key convention.
-        zai_gemini_url = (
-            "https://api.z.ai/api/paas/v4beta/models/gemini-2.5-flash:generateContent"
-        )
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-        }
-        data = {
-            "contents": [
-                {"parts": [{"text": prompt}]}
-            ],
-            "generationConfig": {
-                "temperature": 0.8,
-                "topK": 40,
-                "topP": 0.95,
-                "maxOutputTokens": 1024,
-            },
-        }
-
+        # --- Primary path: official google-genai SDK -------------------------
+        # Uses the new GoogleGenAI client pattern:
+        #   client = genai.Client(api_key=GOOGLE_API_KEY)
+        #   ai.models.generate_content({model: "gemini-2.5-flash", contents: prompt})
         try:
-            # Short connect timeout (1s) + short read timeout (10s). The Z.ai
-            # endpoint is unreachable from this sandbox (errno 101 "Network is
-            # unreachable"), so the connect fails near-instantly anyway; the
-            # short timeouts ensure we fall through to the CLI fallback fast.
-            response = requests.post(zai_gemini_url, headers=headers, json=data, timeout=(1, 10))
-            response_data = response.json()
-
-            if 'error' in response_data:
-                err = response_data['error']
-                logger.warning(
-                    "Z.ai Gemini call failed (will try fallback): HTTP %s | message=%s",
-                    response.status_code,
-                    (err.get('message') or str(err))[:200],
-                )
-                # Fall through to the z-ai CLI fallback below.
-            elif 'candidates' in response_data and len(response_data['candidates']) > 0:
-                cand = response_data['candidates'][0]
-                parts = (cand.get('content') or {}).get('parts') or []
-                if parts and 'text' in parts[0]:
-                    return parts[0]['text']
-        except Exception as primary_err:
-            logger.warning("Z.ai Gemini request error (will try fallback): %s", primary_err)
+            client = _get_gemini_client()
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    temperature=0.8,
+                    top_p=0.95,
+                    top_k=40,
+                    max_output_tokens=1024,
+                ),
+            )
+            text = (response.text or "").strip()
+            if text:
+                logger.info("AI doctor response generated via google-genai SDK (gemini-2.5-flash).")
+                return text
+            logger.warning("google-genai returned empty text; trying fallback.")
+        except Exception as sdk_err:
+            # Google's API is geo-blocked from this sandbox
+            # ("User location is not supported"), so this path usually fails
+            # here. Fall through to the z-ai CLI fallback so the AI doctor
+            # feature still functions.
+            logger.warning("google-genai SDK call failed (will try fallback): %s", str(sdk_err)[:200])
 
         # --- Fallback path: z-ai CLI (pre-authenticated sandbox SDK) ---------
-        # If the provided API key is rejected by Z.ai's public endpoint, use
-        # the locally-configured z-ai CLI (which carries its own credentials)
-        # so the AI doctor feature still functions. The model used is still
-        # gemini-2.5-flash.
+        # Used only when the official Google endpoint is unreachable (e.g.
+        # geo-blocked) so the AI doctor feature still returns a response.
         try:
             proc = subprocess.run(
                 [

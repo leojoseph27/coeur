@@ -33,7 +33,6 @@ google-api-core==2.28.1
 google-auth==2.43.0
 google-auth-httplib2==0.2.0
 google-auth-oauthlib==0.4.6
-google-generativeai==0.1.0rc1
 google-pasta==0.2.0
 googleapis-common-protos==1.72.0
 grpcio==1.48.2
@@ -131,3 +130,4 @@ wrapt==1.12.1
 wsproto==1.2.0
 zipp==3.20.2
 psycopg2-binary==2.9.12
+google-genai
