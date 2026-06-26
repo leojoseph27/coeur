@@ -1,6 +1,5 @@
-# NOTE: numpy, scipy, and numba must be installed as binary wheels (not built
-# from source). The pinned versions below all have prebuilt wheels for
-# Python 3.10 on Linux x86_64, so pip will select them automatically.
+# All pinned versions below have prebuilt cp310 wheels on Linux x86_64.
+# pip will select them automatically (no --only-binary directive needed).
 absl-py==2.3.1
 annotated-types==0.7.0
 anyio==4.5.2
@@ -49,7 +48,7 @@ kiwisolver==1.3.2
 librosa==0.8.1
 llvmlite>=0.39.0
 MarkupSafe==2.0.1
-matplotlib==3.4.3
+matplotlib==3.5.0
 more-itertools==10.5.0
 mpmath==1.3.0
 numba>=0.57.0
