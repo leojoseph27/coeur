@@ -234,71 +234,96 @@ def load_heart_and_ecg_models():
         logger.warning("Heart/ECG features may be unavailable")
 
 def load_audio_models():
-    """Lazily load audio classification and YAMNet models.
+    """Lazily load audio classification and YAMNet models with full instrumentation.
 
-    Uses TensorFlow + tensorflow_hub (~500MB RAM) — only loaded if heart
-    sound analysis is used.
+    Every step has its own try/except so the exact point of failure is logged
+    even if the worker crashes (segfault/OOM). Returns True on success.
     """
     global audio_model, yamnet_model
-    try:
-        import tensorflow as tf
-        import tensorflow_hub as hub
+    import time as _t
 
-        # Phase 1: Log TensorFlow runtime info
-        logger.info(f"[load_audio_models] TensorFlow version: {tf.__version__}")
-        logger.info(f"[load_audio_models] CPU devices: {tf.config.list_physical_devices('CPU')}")
-        gpu_devices = tf.config.list_physical_devices('GPU')
-        logger.info(f"[load_audio_models] GPU devices: {gpu_devices if gpu_devices else 'None (CPU-only)'}")
-
-        # Phase 6: Memory before loading
+    def _mem(label):
         try:
             import resource
-            mem_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            logger.info(f"[load_audio_models] Memory before model load: {mem_before / 1024:.1f} MB")
-        except Exception:
-            mem_before = 0
-
-        # Phase 2: Verify audio_model.h5
-        audio_model_path = os.path.join(BASE_DIR, 'heart/models/audio_model.h5')
-        if audio_model is None and os.path.exists(audio_model_path):
-            file_size = os.path.getsize(audio_model_path)
-            logger.info(f"[load_audio_models] audio_model.h5: path={audio_model_path}, size={file_size} bytes")
-            import time as _t
-            t_start = _t.time()
-            audio_model = tf.keras.models.load_model(audio_model_path)
-            load_time = _t.time() - t_start
-            logger.info(f"[load_audio_models] Audio model loaded in {load_time:.2f}s, "
-                         f"input_shape={audio_model.input_shape}, output_shape={audio_model.output_shape}")
-        elif audio_model is None:
-            logger.error(f"[load_audio_models] audio_model.h5 NOT FOUND at {audio_model_path}")
-
-        # Phase 2: Verify YAMNet SavedModel
-        yamnet_pb = os.path.join(BASE_DIR, 'archive/saved_model.pb')
-        if yamnet_model is None and os.path.exists(yamnet_pb):
-            file_size = os.path.getsize(yamnet_pb)
-            yamnet_model_path = os.path.join(BASE_DIR, 'archive')
-            logger.info(f"[load_audio_models] YAMNet saved_model.pb: path={yamnet_model_path}, size={file_size} bytes")
-            import time as _t
-            t_start = _t.time()
-            yamnet_model = hub.load(yamnet_model_path)
-            load_time = _t.time() - t_start
-            logger.info(f"[load_audio_models] YAMNet loaded in {load_time:.2f}s")
-        elif yamnet_model is None:
-            logger.error(f"[load_audio_models] saved_model.pb NOT FOUND at {yamnet_pb}")
-
-        # Phase 6: Memory after loading
-        try:
-            import resource
-            mem_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            logger.info(f"[load_audio_models] Memory after model load: {mem_after / 1024:.1f} MB "
-                         f"(delta: +{(mem_after - mem_before) / 1024:.1f} MB)")
+            m = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            logger.info(f"[load_audio_models] Memory at {label}: {m / 1024:.1f} MB")
         except Exception:
             pass
 
-        logger.info("[load_audio_models] All audio models loaded successfully")
+    logger.info("[load_audio_models] ====== ENTERING load_audio_models() ======")
+    _mem("entering load_audio_models")
+
+    # ---- Step 1: Import TensorFlow ----
+    logger.info("[load_audio_models] TensorFlow import START")
+    t_start = _t.time()
+    try:
+        import tensorflow as tf
+        logger.info(f"[load_audio_models] TensorFlow import COMPLETE ({_t.time() - t_start:.2f}s)")
+        logger.info(f"[load_audio_models] TensorFlow version: {tf.__version__}")
+        logger.info(f"[load_audio_models] CPU devices: {tf.config.list_physical_devices('CPU')}")
+        gpu = tf.config.list_physical_devices('GPU')
+        logger.info(f"[load_audio_models] GPU devices: {gpu if gpu else 'None (CPU-only)'}")
+        _mem("after TensorFlow import")
     except Exception as e:
-        logger.error(f"[load_audio_models] FAILED: {str(e)}", exc_info=True)
-        logger.warning("Audio analysis features may be unavailable")
+        logger.exception(f"[load_audio_models] TensorFlow import FAILED: {e}")
+        return False
+
+    # ---- Step 2: Import tensorflow_hub ----
+    logger.info("[load_audio_models] tensorflow_hub import START")
+    try:
+        import tensorflow_hub as hub
+        logger.info("[load_audio_models] tensorflow_hub import COMPLETE")
+        _mem("after tensorflow_hub import")
+    except Exception as e:
+        logger.exception(f"[load_audio_models] tensorflow_hub import FAILED: {e}")
+        return False
+
+    # ---- Step 3: Load audio_model.h5 ----
+    audio_model_path = os.path.join(BASE_DIR, 'heart/models/audio_model.h5')
+    if audio_model is None:
+        if os.path.exists(audio_model_path):
+            file_size = os.path.getsize(audio_model_path)
+            logger.info(f"[load_audio_models] Loading audio_model.h5 START (path={audio_model_path}, size={file_size} bytes)")
+            t_start = _t.time()
+            try:
+                audio_model = tf.keras.models.load_model(audio_model_path)
+                logger.info(f"[load_audio_models] Loading audio_model.h5 COMPLETE ({_t.time() - t_start:.2f}s)")
+                logger.info(f"[load_audio_models] Model input shape: {audio_model.input_shape}")
+                logger.info(f"[load_audio_models] Model output shape: {audio_model.output_shape}")
+                _mem("after audio_model.h5 load")
+            except Exception as e:
+                logger.exception(f"[load_audio_models] Loading audio_model.h5 FAILED: {e}")
+                return False
+        else:
+            logger.error(f"[load_audio_models] audio_model.h5 NOT FOUND at {audio_model_path}")
+            return False
+    else:
+        logger.info("[load_audio_models] audio_model already loaded (cached)")
+
+    # ---- Step 4: Load YAMNet SavedModel ----
+    yamnet_pb = os.path.join(BASE_DIR, 'archive/saved_model.pb')
+    if yamnet_model is None:
+        if os.path.exists(yamnet_pb):
+            file_size = os.path.getsize(yamnet_pb)
+            yamnet_dir = os.path.join(BASE_DIR, 'archive')
+            logger.info(f"[load_audio_models] Loading YAMNet START (path={yamnet_dir}, saved_model.pb size={file_size} bytes)")
+            t_start = _t.time()
+            try:
+                yamnet_model = hub.load(yamnet_dir)
+                logger.info(f"[load_audio_models] Loading YAMNet COMPLETE ({_t.time() - t_start:.2f}s)")
+                _mem("after YAMNet load")
+            except Exception as e:
+                logger.exception(f"[load_audio_models] Loading YAMNet FAILED: {e}")
+                return False
+        else:
+            logger.error(f"[load_audio_models] saved_model.pb NOT FOUND at {yamnet_pb}")
+            return False
+    else:
+        logger.info("[load_audio_models] YAMNet already loaded (cached)")
+
+    _mem("exiting load_audio_models (success)")
+    logger.info("[load_audio_models] ====== ALL AUDIO MODELS LOADED SUCCESSFULLY ======")
+    return True
 
 def extract_embeddings(audio_data):
     """Extract embeddings using YAMNet model."""
@@ -687,203 +712,213 @@ def analyze_ecg_endpoint():
 @app.route('/analyze_audio', methods=['POST'])
 @login_required
 def analyze_audio():
-    """Heart sound analysis endpoint with full instrumentation.
+    """Heart sound analysis with full production instrumentation (Phases 1-10).
 
-    Logs every stage (started/completed/time) and returns structured JSON
-    errors with stage info instead of crashing or returning HTML.
+    Every stage logs BEFORE and AFTER with timing + memory. All failures
+    return structured JSON — never HTML, never a Gunicorn default page.
     """
     import time as _time
     import traceback as _tb
+    import os as _os
     t0 = _time.time()
-    tmp_path = None  # initialized for the finally block
+    tmp_path = None
 
-    def _log_stage(stage, start_t):
+    # Phase 1: ENTERED banner — if this never appears in logs, the worker
+    # died before reaching the endpoint (startup/import/gunicorn issue).
+    logger.info("[analyze_audio] =========================================")
+    logger.info("[analyze_audio]          ENTERED /analyze_audio")
+    logger.info("[analyze_audio] =========================================")
+    logger.info(f"[analyze_audio] request method={request.method}, content_type={request.content_type}")
+
+    def _mem(label):
+        try:
+            import resource
+            m = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            logger.info(f"[analyze_audio] Memory at {label}: {m / 1024:.1f} MB")
+        except Exception:
+            pass
+
+    def _stage_start(name):
+        logger.info(f"[analyze_audio] Stage {name} START")
+        return _time.time()
+
+    def _stage_done(name, start_t):
         elapsed = _time.time() - start_t
-        logger.info(f"[analyze_audio] {stage} completed in {elapsed:.3f}s")
+        logger.info(f"[analyze_audio] Stage {name} COMPLETE ({elapsed:.3f}s)")
 
     try:
-        # ---- Stage 1: Request received ----
-        logger.info(f"[analyze_audio] Stage 1: Request received from user_id={session.get('user_id')}")
+        _mem("request start")
 
-        # ---- Stage 2: File validation ----
-        t1 = _time.time()
+        # ---- Stage 1: Request Validation ----
+        t1 = _stage_start("1 (Request Validation)")
         if 'audio' not in request.files:
-            logger.error("[analyze_audio] Stage 2 FAILED: no 'audio' field in request.files")
+            logger.error("[analyze_audio] Stage 1 FAILED: no 'audio' field in request.files")
             return jsonify({'success': False, 'stage': 'File Validation', 'error': 'No audio file provided'}), 400
 
         audio_file = request.files['audio']
         if audio_file.filename == '':
             return jsonify({'success': False, 'stage': 'File Validation', 'error': 'No selected file'}), 400
-
         if not audio_file.filename.endswith('.wav'):
             return jsonify({'success': False, 'stage': 'File Validation', 'error': 'Please upload a WAV file (.wav extension required)'}), 400
 
-        # Log file details
-        audio_file.stream.seek(0, 2)  # seek to end
+        audio_file.stream.seek(0, 2)
         file_size = audio_file.stream.tell()
-        audio_file.stream.seek(0)  # reset
-        logger.info(f"[analyze_audio] Stage 2: File validated. filename={audio_file.filename}, "
-                     f"size={file_size} bytes, content_type={audio_file.content_type}")
-        _log_stage("Stage 2 (File Validation)", t1)
+        audio_file.stream.seek(0)
+        logger.info(f"[analyze_audio] Stage 1: filename={audio_file.filename}, size={file_size} bytes, "
+                     f"content_type={audio_file.content_type}")
+        _stage_done("1 (Request Validation)", t1)
 
-        # ---- Stage 3: Model loading ----
-        t2 = _time.time()
-        audio_model_path = os.path.join(BASE_DIR, 'heart/models/audio_model.h5')
-        yamnet_pb_path = os.path.join(BASE_DIR, 'archive/saved_model.pb')
-
-        if not os.path.exists(audio_model_path):
-            logger.error(f"[analyze_audio] Stage 3 FAILED: audio_model.h5 not found at {audio_model_path}")
-            return jsonify({
-                'success': False, 'stage': 'Model Loading',
-                'error': f'Audio model file not found: {audio_model_path}'
-            }), 500
-
-        logger.info(f"[analyze_audio] Stage 3: audio_model.h5 exists ({os.path.getsize(audio_model_path)} bytes), "
-                     f"saved_model.pb exists={os.path.exists(yamnet_pb_path)}")
-
+        # ---- Stage 2: Model Loading ----
+        t2 = _stage_start("2 (Model Loading)")
+        _mem("before model load")
         global audio_model, yamnet_model
-        try:
-            if audio_model is None or yamnet_model is None:
-                logger.info("[analyze_audio] Stage 3: Loading TensorFlow + audio models (first time, may take 10-20s)...")
-                load_audio_models()
-                if audio_model is None:
-                    return jsonify({'success': False, 'stage': 'Model Loading', 'error': 'Audio model failed to load'}), 500
-                if yamnet_model is None:
-                    return jsonify({'success': False, 'stage': 'Model Loading', 'error': 'YAMNet model failed to load'}), 500
-                logger.info(f"[analyze_audio] Stage 3: Models loaded. audio_model={type(audio_model).__name__}, "
-                             f"yamnet_model={type(yamnet_model).__name__}")
-            else:
-                logger.info("[analyze_audio] Stage 3: Models already loaded (cached)")
-        except Exception as me:
-            logger.error(f"[analyze_audio] Stage 3 FAILED: model load error:\n{_tb.format_exc()}")
-            return jsonify({
-                'success': False, 'stage': 'Model Loading',
-                'error': f'Failed to load audio models: {str(me)[:200]}',
-                'traceback': _tb.format_exc() if DEBUG_MODE else None
-            }), 500
-        _log_stage("Stage 3 (Model Loading)", t2)
+        if audio_model is None or yamnet_model is None:
+            logger.info("[analyze_audio] Stage 2: Calling load_audio_models() (first time, may take 10-30s)...")
+            success = load_audio_models()
+            if not success:
+                logger.error("[analyze_audio] Stage 2 FAILED: load_audio_models() returned False")
+                return jsonify({'success': False, 'stage': 'Model Loading',
+                                'error': 'Audio model failed to load. Check server logs for details.'}), 500
+            if audio_model is None:
+                return jsonify({'success': False, 'stage': 'Model Loading', 'error': 'Audio model is None after load'}), 500
+            if yamnet_model is None:
+                return jsonify({'success': False, 'stage': 'Model Loading', 'error': 'YAMNet model is None after load'}), 500
+            logger.info(f"[analyze_audio] Stage 2: Models loaded. audio_model={type(audio_model).__name__}, "
+                         f"yamnet_model={type(yamnet_model).__name__}")
+        else:
+            logger.info("[analyze_audio] Stage 2: Models already loaded (cached)")
+        _mem("after model load")
+        _stage_done("2 (Model Loading)", t2)
 
-        # ---- Stage 4: Audio loading (librosa) ----
-        t3 = _time.time()
+        # ---- Stage 3: Audio Loading (librosa) ----
+        t3 = _stage_start("3 (Audio Loading)")
+        _mem("before librosa")
         try:
             import librosa
             import numpy as np
-            # Save to a temporary file (librosa.load works better with file paths than file objects)
             import tempfile
+
+            logger.info("[analyze_audio] Stage 3: Creating temp file START")
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
                 audio_file.save(tmp.name)
                 tmp_path = tmp.name
-            logger.info(f"[analyze_audio] Stage 4: Saved temp file to {tmp_path}")
+            logger.info(f"[analyze_audio] Stage 3: Temp file created: {tmp_path}")
 
-            y, sr = librosa.load(tmp_path, sr=16000)
-            os.unlink(tmp_path)  # clean up temp file
+            logger.info("[analyze_audio] Stage 3: librosa.load() START")
+            y, sr = librosa.load(tmp_path, sr=16000, mono=True)
+            logger.info(f"[analyze_audio] Stage 3: librosa.load() COMPLETE")
+            # Clean up temp file immediately after loading
+            try:
+                _os.unlink(tmp_path)
+                tmp_path = None
+                logger.info("[analyze_audio] Stage 3: Temp file deleted after librosa.load")
+            except Exception:
+                pass
+
             y = y.astype(np.float32)
             y = librosa.util.normalize(y)
 
             duration = len(y) / sr if sr > 0 else 0
-            logger.info(f"[analyze_audio] Stage 4: Audio loaded. samples={len(y)}, sr={sr}, "
-                         f"duration={duration:.2f}s, dtype={y.dtype}, "
-                         f"has_nan={np.isnan(y).any()}, has_inf={np.isinf(y).any()}")
+            nan_count = int(np.isnan(y).sum())
+            inf_count = int(np.isinf(y).sum())
+            logger.info(f"[analyze_audio] Stage 3: Audio loaded. samples={len(y)}, sr={sr}Hz, "
+                         f"duration={duration:.2f}s, channels=1(mono), dtype={y.dtype}, "
+                         f"nan_count={nan_count}, inf_count={inf_count}, "
+                         f"min={np.min(y):.6f}, max={np.max(y):.6f}")
 
             if len(y) == 0:
                 return jsonify({'success': False, 'stage': 'Audio Loading', 'error': 'Audio file is empty or could not be decoded'}), 400
-            if np.isnan(y).any() or np.isinf(y).any():
-                return jsonify({'success': False, 'stage': 'Audio Loading', 'error': 'Audio contains NaN or Inf values'}), 400
+            if nan_count > 0 or inf_count > 0:
+                return jsonify({'success': False, 'stage': 'Audio Loading', 'error': f'Audio contains {nan_count} NaN and {inf_count} Inf values'}), 400
         except Exception as ae:
-            logger.error(f"[analyze_audio] Stage 4 FAILED:\n{_tb.format_exc()}")
-            # Clean up temp file if it exists
-            try:
-                if 'tmp_path' in dir() and os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-            except Exception:
-                pass
-            return jsonify({
-                'success': False, 'stage': 'Audio Loading',
-                'error': f'Failed to load audio: {str(ae)[:200]}'
-            }), 500
-        _log_stage("Stage 4 (Audio Loading)", t3)
+            logger.exception(f"[analyze_audio] Stage 3 FAILED: {ae}")
+            return jsonify({'success': False, 'stage': 'Audio Loading',
+                            'error': f'Failed to load audio: {str(ae)[:200]}',
+                            'traceback': _tb.format_exc() if DEBUG_MODE else None}), 500
+        _mem("after librosa")
+        _stage_done("3 (Audio Loading)", t3)
 
-        # ---- Stage 5: Feature extraction (YAMNet embeddings) ----
-        t4 = _time.time()
+        # ---- Stage 4: Feature Extraction (YAMNet embeddings) ----
+        t4 = _stage_start("4 (Feature Extraction)")
+        _mem("before embeddings")
         try:
+            logger.info("[analyze_audio] Stage 4: extract_embeddings() START")
             embeddings = extract_embeddings(y)
-            logger.info(f"[analyze_audio] Stage 5: Embeddings extracted. shape={embeddings.shape}, "
-                         f"dtype={embeddings.dtype}")
+            logger.info(f"[analyze_audio] Stage 4: extract_embeddings() COMPLETE")
+            logger.info(f"[analyze_audio] Stage 4: embedding shape={embeddings.shape}, dtype={embeddings.dtype}, "
+                         f"nan_count={int(np.isnan(embeddings).sum())}, inf_count={int(np.isinf(embeddings).sum())}, "
+                         f"min={np.min(embeddings):.6f}, max={np.max(embeddings):.6f}")
             if np.isnan(embeddings).any() or np.isinf(embeddings).any():
                 return jsonify({'success': False, 'stage': 'Feature Extraction',
                                 'error': 'Embeddings contain NaN or Inf values'}), 500
         except Exception as fe:
-            logger.error(f"[analyze_audio] Stage 5 FAILED:\n{_tb.format_exc()}")
-            return jsonify({
-                'success': False, 'stage': 'Feature Extraction',
-                'error': f'Failed to extract features: {str(fe)[:200]}',
-                'traceback': _tb.format_exc() if DEBUG_MODE else None
-            }), 500
-        _log_stage("Stage 5 (Feature Extraction)", t4)
+            logger.exception(f"[analyze_audio] Stage 4 FAILED: {fe}")
+            return jsonify({'success': False, 'stage': 'Feature Extraction',
+                            'error': f'Failed to extract features: {str(fe)[:200]}',
+                            'traceback': _tb.format_exc() if DEBUG_MODE else None}), 500
+        _mem("after embeddings")
+        _stage_done("4 (Feature Extraction)", t4)
 
-        # ---- Stage 6: Prediction ----
-        t5 = _time.time()
+        # ---- Stage 5: Prediction ----
+        t5 = _stage_start("5 (Prediction)")
+        _mem("before prediction")
         try:
+            logger.info("[analyze_audio] Stage 5: model.predict() START")
             predictions = audio_model.predict(embeddings, verbose=0)
+            logger.info(f"[analyze_audio] Stage 5: model.predict() COMPLETE")
+            logger.info(f"[analyze_audio] Stage 5: raw_predictions={predictions[0]}")
             predicted_class = int(np.argmax(predictions[0]))
             confidence = float(predictions[0][predicted_class])
+            logger.info(f"[analyze_audio] Stage 5: predicted_class={predicted_class}, confidence={confidence:.6f} ({confidence*100:.2f}%)")
 
-            logger.info(f"[analyze_audio] Stage 6: Prediction complete. "
-                         f"raw_predictions={predictions[0]}, predicted_class={predicted_class}, "
-                         f"confidence={confidence:.4f}")
+            if np.isnan(predictions).any():
+                logger.error("[analyze_audio] Stage 5: Predictions contain NaN!")
+                return jsonify({'success': False, 'stage': 'Prediction', 'error': 'Model produced NaN predictions'}), 500
         except Exception as pe:
-            logger.error(f"[analyze_audio] Stage 6 FAILED:\n{_tb.format_exc()}")
-            return jsonify({
-                'success': False, 'stage': 'Prediction',
-                'error': f'Failed to predict: {str(pe)[:200]}',
-                'traceback': _tb.format_exc() if DEBUG_MODE else None
-            }), 500
-        _log_stage("Stage 6 (Prediction)", t5)
+            logger.exception(f"[analyze_audio] Stage 5 FAILED: {pe}")
+            return jsonify({'success': False, 'stage': 'Prediction',
+                            'error': f'Failed to predict: {str(pe)[:200]}',
+                            'traceback': _tb.format_exc() if DEBUG_MODE else None}), 500
+        _mem("after prediction")
+        _stage_done("5 (Prediction)", t5)
 
-        # ---- Stage 7: Response ----
+        # ---- Stage 6: Response ----
+        t6 = _stage_start("6 (Response)")
         disease_map = {
-            0: 'Aortic Stenosis',
-            1: 'Mitral Regurgitation',
-            2: 'Mitral Stenosis',
-            3: 'Mitral Valve Prolapse',
-            4: 'Normal'
+            0: 'Aortic Stenosis', 1: 'Mitral Regurgitation', 2: 'Mitral Stenosis',
+            3: 'Mitral Valve Prolapse', 4: 'Normal'
         }
         disease_name = disease_map.get(predicted_class, 'Unknown')
-
         result = {
             'success': True,
             'prediction': predicted_class,
             'disease': disease_name,
             'confidence': round(confidence * 100, 2)
         }
-        logger.info(f"[analyze_audio] Stage 7: Returning response: {result}")
-        _log_stage("Stage 7 (Response)", t0)
+        total = _time.time() - t0
+        logger.info(f"[analyze_audio] Stage 6: Returning response: {result}")
+        logger.info(f"[analyze_audio] ====== REQUEST COMPLETE in {total:.2f}s ======")
+        _stage_done("6 (Response)", t6)
+        _mem("request complete")
         return jsonify(result)
 
     except Exception as e:
-        logger.error(f"[analyze_audio] UNHANDLED EXCEPTION:\n{_tb.format_exc()}")
+        logger.exception(f"[analyze_audio] UNHANDLED EXCEPTION: {e}")
         return jsonify({
-            'success': False,
-            'stage': 'Unhandled',
+            'success': False, 'stage': 'Unhandled',
             'error': str(e),
             'traceback': _tb.format_exc() if DEBUG_MODE else None
         }), 500
 
     finally:
-        # Phase 7: Always clean up temp file, even on failure
-        if tmp_path and os.path.exists(tmp_path):
+        # Phase 7: Always clean up temp file
+        if tmp_path and _os.path.exists(tmp_path):
             try:
-                os.unlink(tmp_path)
+                _os.unlink(tmp_path)
                 logger.info(f"[analyze_audio] Cleanup: deleted temp file {tmp_path}")
             except Exception as ce:
                 logger.warning(f"[analyze_audio] Cleanup: could not delete {tmp_path}: {ce}")
-        # Phase 6: Log final memory
-        try:
-            import resource as _res
-            mem = _res.getrusage(_res.RUSAGE_SELF).ru_maxrss
-            logger.info(f"[analyze_audio] Memory at cleanup: {mem / 1024:.1f} MB")
-        except Exception:
-            pass
+        _mem("cleanup (finally)")
 
 @app.route('/profile')
 @login_required
