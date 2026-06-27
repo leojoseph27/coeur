@@ -243,17 +243,61 @@ def load_audio_models():
     try:
         import tensorflow as tf
         import tensorflow_hub as hub
+
+        # Phase 1: Log TensorFlow runtime info
+        logger.info(f"[load_audio_models] TensorFlow version: {tf.__version__}")
+        logger.info(f"[load_audio_models] CPU devices: {tf.config.list_physical_devices('CPU')}")
+        gpu_devices = tf.config.list_physical_devices('GPU')
+        logger.info(f"[load_audio_models] GPU devices: {gpu_devices if gpu_devices else 'None (CPU-only)'}")
+
+        # Phase 6: Memory before loading
+        try:
+            import resource
+            mem_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            logger.info(f"[load_audio_models] Memory before model load: {mem_before / 1024:.1f} MB")
+        except Exception:
+            mem_before = 0
+
+        # Phase 2: Verify audio_model.h5
         audio_model_path = os.path.join(BASE_DIR, 'heart/models/audio_model.h5')
         if audio_model is None and os.path.exists(audio_model_path):
+            file_size = os.path.getsize(audio_model_path)
+            logger.info(f"[load_audio_models] audio_model.h5: path={audio_model_path}, size={file_size} bytes")
+            import time as _t
+            t_start = _t.time()
             audio_model = tf.keras.models.load_model(audio_model_path)
-            logger.info("Audio model loaded successfully")
+            load_time = _t.time() - t_start
+            logger.info(f"[load_audio_models] Audio model loaded in {load_time:.2f}s, "
+                         f"input_shape={audio_model.input_shape}, output_shape={audio_model.output_shape}")
+        elif audio_model is None:
+            logger.error(f"[load_audio_models] audio_model.h5 NOT FOUND at {audio_model_path}")
+
+        # Phase 2: Verify YAMNet SavedModel
         yamnet_pb = os.path.join(BASE_DIR, 'archive/saved_model.pb')
         if yamnet_model is None and os.path.exists(yamnet_pb):
+            file_size = os.path.getsize(yamnet_pb)
             yamnet_model_path = os.path.join(BASE_DIR, 'archive')
+            logger.info(f"[load_audio_models] YAMNet saved_model.pb: path={yamnet_model_path}, size={file_size} bytes")
+            import time as _t
+            t_start = _t.time()
             yamnet_model = hub.load(yamnet_model_path)
-            logger.info(f"YAMNet model loaded successfully from {yamnet_model_path}")
+            load_time = _t.time() - t_start
+            logger.info(f"[load_audio_models] YAMNet loaded in {load_time:.2f}s")
+        elif yamnet_model is None:
+            logger.error(f"[load_audio_models] saved_model.pb NOT FOUND at {yamnet_pb}")
+
+        # Phase 6: Memory after loading
+        try:
+            import resource
+            mem_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            logger.info(f"[load_audio_models] Memory after model load: {mem_after / 1024:.1f} MB "
+                         f"(delta: +{(mem_after - mem_before) / 1024:.1f} MB)")
+        except Exception:
+            pass
+
+        logger.info("[load_audio_models] All audio models loaded successfully")
     except Exception as e:
-        logger.error(f"Error loading audio/YAMNet models: {str(e)}")
+        logger.error(f"[load_audio_models] FAILED: {str(e)}", exc_info=True)
         logger.warning("Audio analysis features may be unavailable")
 
 def extract_embeddings(audio_data):
@@ -651,6 +695,7 @@ def analyze_audio():
     import time as _time
     import traceback as _tb
     t0 = _time.time()
+    tmp_path = None  # initialized for the finally block
 
     def _log_stage(stage, start_t):
         elapsed = _time.time() - start_t
@@ -823,6 +868,22 @@ def analyze_audio():
             'error': str(e),
             'traceback': _tb.format_exc() if DEBUG_MODE else None
         }), 500
+
+    finally:
+        # Phase 7: Always clean up temp file, even on failure
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+                logger.info(f"[analyze_audio] Cleanup: deleted temp file {tmp_path}")
+            except Exception as ce:
+                logger.warning(f"[analyze_audio] Cleanup: could not delete {tmp_path}: {ce}")
+        # Phase 6: Log final memory
+        try:
+            import resource as _res
+            mem = _res.getrusage(_res.RUSAGE_SELF).ru_maxrss
+            logger.info(f"[analyze_audio] Memory at cleanup: {mem / 1024:.1f} MB")
+        except Exception:
+            pass
 
 @app.route('/profile')
 @login_required
