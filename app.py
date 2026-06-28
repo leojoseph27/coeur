@@ -2021,11 +2021,15 @@ List 5-6 specific warning signs that require immediate emergency care. Base thes
             'heart_sound_result': heart_sound,
         }
 
-        # Store in session for PDF export
-        session['latest_analysis'] = {
-            'report_data': report_data,
-            'timestamp': datetime.now().isoformat()
-        }
+        # Store on filesystem for PDF export (session cookie has ~4KB limit,
+        # report_data can be 10-20KB, which overflows the cookie silently)
+        report_cache_dir = os.path.join(BASE_DIR, 'reports', 'cache')
+        os.makedirs(report_cache_dir, exist_ok=True)
+        user_id = session.get('user_id', 'anonymous')
+        cache_path = os.path.join(report_cache_dir, f'analysis_{user_id}.json')
+        with open(cache_path, 'w') as f:
+            json.dump(report_data, f)
+        logger.info(f"[generate_analysis] Report cached to {cache_path} ({os.path.getsize(cache_path)} bytes)")
 
         return jsonify(report_data)
 
@@ -2180,10 +2184,16 @@ def download_report():
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        # Get the latest analysis data from the session
-        analysis_data = session.get('latest_analysis')
-        if not analysis_data:
+        # Read cached report data from filesystem (session cookie overflows at ~4KB)
+        cache_path = os.path.join(BASE_DIR, 'reports', 'cache', f'analysis_{user_id}.json')
+        logger.info(f"[download_report] Looking for cache at {cache_path}")
+        if not os.path.exists(cache_path):
+            logger.error(f"[download_report] Cache file not found: {cache_path}")
             return jsonify({'error': 'No analysis data available. Please generate an analysis first.'}), 400
+
+        with open(cache_path, 'r') as f:
+            analysis_data = json.load(f)
+        logger.info(f"[download_report] Cache loaded ({os.path.getsize(cache_path)} bytes)")
 
         # Generate the PDF report
         report_path = generate_pdf_report(user_id, analysis_data)
