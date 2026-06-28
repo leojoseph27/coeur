@@ -1,0 +1,64 @@
+# Git
+.git
+.gitattributes
+.gitignore
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+
+# Virtual environments
+.venv
+venv
+venv_new
+
+# Environment files (secrets must be set as HF Spaces secrets, not committed)
+.env
+.env.*
+*.env
+
+# Node (sandbox artifacts, not needed in Docker)
+node_modules
+.next
+bun.lock
+
+# Sandbox scripts (not part of the app)
+.zscripts
+Caddyfile
+
+# Logs and temporary files
+*.log
+dev.log
+install.log
+logs/
+temp/
+
+# Screenshots (not needed in production)
+*.png
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+
+# Docker meta (don't copy Dockerfile into itself)
+Dockerfile
+.dockerignore
+
+# Render-specific (not needed in HF)
+render.yaml
+Procfile
+DEPLOYMENT.md
+
+# Intermediate requirements files
+requirements_clean.txt
+requirements_final.txt
+run_install.sh
+
+# OS files
+.DS_Store
+Thumbs.db

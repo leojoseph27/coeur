@@ -48,8 +48,8 @@ logger = logging.getLogger(__name__)
 # started from a different CWD.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Render/hosting port (used by some environments/tools)
-PORT = int(os.environ.get("PORT", "10000"))
+# Port: Hugging Face Spaces uses 7860, Render uses $PORT, local uses 5000
+PORT = int(os.environ.get("PORT", "7860"))
 
 # Create necessary directories (absolute paths so they work on any host)
 os.makedirs(os.path.join(BASE_DIR, 'reports'), exist_ok=True)
@@ -2045,7 +2045,7 @@ if __name__ == '__main__':
     # gevent — those caused segfaults with TensorFlow/PyTorch native libs).
     # gunicorn (see Procfile) is used in production with the sync worker
     # class, which is compatible with threading mode.
-    server_port = int(os.environ.get("PORT", "5000"))
+    server_port = int(os.environ.get("PORT", "7860"))
     logger.info(f"Starting Coeur on port {server_port} (debug={DEBUG_MODE})")
     socketio.run(
         app,
