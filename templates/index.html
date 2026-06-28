@@ -1021,9 +1021,53 @@
             margin-top: 20px;
             display: none;
         }
-        
+
         .analysis-result.show {
             display: block;
+        }
+
+        /* ===== AI Loading Panel ===== */
+        .ai-loading-panel {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 50px 30px;
+            margin-top: 20px;
+            background: rgba(26, 26, 46, 0.8);
+            border-radius: var(--border-radius);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+            animation: fadeInUp 0.4s ease;
+        }
+        .ai-loading-panel.active { display: flex; }
+        .ai-spinner {
+            width: 56px; height: 56px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top: 4px solid var(--primary-color);
+            border-radius: 50%;
+            animation: ai-spin 0.8s linear infinite;
+            margin-bottom: 24px;
+        }
+        @keyframes ai-spin { to { transform: rotate(360deg); } }
+        .ai-loading-title {
+            font-size: 1.3rem; font-weight: 700; color: var(--primary-color);
+            margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
+        }
+        .ai-loading-status {
+            font-size: 0.95rem; color: var(--text-light);
+            min-height: 24px; transition: opacity 0.3s ease;
+        }
+        .ai-loading-hint {
+            font-size: 0.8rem; color: var(--text-light); opacity: 0.5;
+            margin-top: 16px;
+        }
+        .fade-out { animation: fadeOut 0.4s ease forwards; }
+        .fade-in { animation: fadeInUp 0.5s ease forwards; }
+        @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        #generateAnalysis.loading {
+            opacity: 0.6; cursor: not-allowed; pointer-events: none;
         }
     </style>
 </head>
@@ -1323,6 +1367,12 @@
                         </button>
                         <div id="aiAnalysisResult" class="analysis-result">
                             <!-- AI Analysis result will be displayed here -->
+                        </div>
+                        <div id="aiLoadingPanel" class="ai-loading-panel">
+                            <div class="ai-spinner"></div>
+                            <div class="ai-loading-title"><i class="fas fa-brain"></i> AI Medical Analysis</div>
+                            <div class="ai-loading-status" id="aiLoadingStatus">Analyzing your cardiovascular data...</div>
+                            <div class="ai-loading-hint">This may take 10-30 seconds while the AI reviews your results</div>
                         </div>
                     </div>
                 </div>
@@ -1935,23 +1985,57 @@
         // Function to generate AI analysis
         async function generateAnalysis() {
             const results = collectResults();
-            
+
             // Check if we have at least one result
             if (!results.heartDisease && !results.ecg && !results.heartSound) {
                 alert('Please complete at least one test to generate analysis');
                 return;
             }
 
+            // --- Loading UX ---
+            const btn = document.getElementById('generateAnalysis');
+            const resultDiv = document.getElementById('aiAnalysisResult');
+            const loadingPanel = document.getElementById('aiLoadingPanel');
+            const statusEl = document.getElementById('aiLoadingStatus');
+            const originalBtnHTML = btn.innerHTML;
+
+            // Disable button
+            btn.classList.add('loading');
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating AI Report...';
+
+            // Hide previous report, show loading panel
+            resultDiv.classList.remove('show');
+            resultDiv.style.opacity = '0';
+            loadingPanel.classList.add('active');
+
+            // Build context-aware status messages
+            const messages = ['Reviewing patient information...'];
+            if (results.heartDisease) messages.push('Analyzing heart disease prediction...');
+            if (results.ecg) messages.push('Examining ECG findings...');
+            if (results.heartSound) messages.push('Processing heart sound analysis...');
+            messages.push('Consulting the AI medical model...');
+            messages.push('Generating professional medical report...');
+            messages.push('Formatting recommendations...');
+            messages.push('Almost finished...');
+
+            let msgIndex = 0;
+            statusEl.textContent = messages[0];
+            const msgInterval = setInterval(() => {
+                msgIndex = (msgIndex + 1) % messages.length;
+                statusEl.style.opacity = '0';
+                setTimeout(() => {
+                    statusEl.textContent = messages[msgIndex];
+                    statusEl.style.opacity = '1';
+                }, 300);
+            }, 2500);
+
             try {
                 const response = await fetch('/api/generate_analysis', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(results)
                 });
 
-                // Check response.ok BEFORE parsing JSON
                 if (!response.ok) {
                     const errorText = await response.text();
                     let errMsg = `Server error (HTTP ${response.status})`;
@@ -1968,8 +2052,6 @@
                 if (data.status !== 'success') {
                     throw new Error(data.message || 'Analysis failed');
                 }
-
-                const resultDiv = document.getElementById('aiAnalysisResult');
 
                 // ---- Build the professional medical report ----
                 const riskIcon = data.overall_assessment.risk_color === 'red' ? 'fa-circle-exclamation' :
@@ -2055,7 +2137,7 @@
 
                 // Build the complete report
                 resultDiv.innerHTML = `
-                    <div class="med-report">
+                    <div class="med-report fade-in">
                         <div class="med-report-header">
                             <h2><i class="fas fa-heart-pulse"></i> CARDIOVASCULAR ANALYSIS REPORT</h2>
                             <div class="report-meta">
@@ -2087,12 +2169,34 @@
                         </div>
                     </div>
                 `;
-                resultDiv.classList.add('show');
+
+                // --- Success: fade out loading, fade in report ---
+                clearInterval(msgInterval);
+                loadingPanel.classList.add('fade-out');
+                setTimeout(() => {
+                    loadingPanel.classList.remove('active', 'fade-out');
+                    resultDiv.classList.add('show');
+                    resultDiv.style.opacity = '1';
+                    // Smooth scroll to report
+                    resultDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 400);
+
+                // Re-enable button
+                btn.classList.remove('loading');
+                btn.innerHTML = originalBtnHTML;
+
             } catch (error) {
                 console.error('Error generating analysis:', error);
-                const resultDiv = document.getElementById('aiAnalysisResult');
+                clearInterval(msgInterval);
+                // Hide loading panel
+                loadingPanel.classList.remove('active');
+                // Show error
                 resultDiv.innerHTML = `<div class="alert alert-danger"><strong>Analysis Error:</strong> ${error.message}</div>`;
                 resultDiv.classList.add('show');
+                resultDiv.style.opacity = '1';
+                // Re-enable button
+                btn.classList.remove('loading');
+                btn.innerHTML = originalBtnHTML;
             }
         }
 
