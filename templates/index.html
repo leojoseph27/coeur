@@ -1655,10 +1655,36 @@
                     body: JSON.stringify(data)
                 });
 
+                // Check response.ok BEFORE parsing JSON
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    loading.style.display = 'none';
+                    resultBox.style.display = 'block';
+                    let errMsg = `Server error (HTTP ${response.status})`;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.error) errMsg = errorJson.error;
+                        if (errorJson.stage) errMsg = `[${errorJson.stage}] ${errMsg}`;
+                    } catch (e) {
+                        errMsg = `Server error (HTTP ${response.status}). The model may still be loading.`;
+                    }
+                    document.getElementById('ecgPrediction').textContent = 'ECG Analysis unavailable.';
+                    resultBox.innerHTML = `<div class="alert alert-danger"><strong>Analysis unavailable.</strong><br>${errMsg}</div>`;
+                    return;
+                }
+
                 const result = await response.json();
 
                 loading.style.display = 'none';
                 resultBox.style.display = 'block';
+
+                // Check for error in 200 response
+                if (result.error || result.is_anomaly === undefined) {
+                    const errMsg = result.error || 'Unexpected response format';
+                    document.getElementById('ecgPrediction').textContent = 'ECG Analysis unavailable.';
+                    resultBox.innerHTML = `<div class="alert alert-danger"><strong>Analysis unavailable.</strong><br>${errMsg}</div>`;
+                    return;
+                }
 
                 resultBox.className = `result-box ${result.is_anomaly ? 'anomaly' : 'normal'}`;
 

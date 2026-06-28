@@ -674,48 +674,152 @@ def analyze_heart():
 @app.route('/analyze_ecg', methods=['POST'])
 @login_required
 def analyze_ecg_endpoint():
-    try:
-        data = request.get_json()
-        ecg_values = data.get('ecg_values', [])
-        
-        if len(ecg_values) != 141:
-            return jsonify({'error': f'Expected 141 ECG values, but got {len(ecg_values)}'}), 400
-        
-        # Ensure ECG model is loaded lazily
-        load_heart_and_ecg_models()
-        is_anomaly, original, reconstructed = analyze_ecg(ecg_values)
+    """ECG analysis endpoint with full instrumentation."""
+    import time as _time
+    import traceback as _tb
+    t0 = _time.time()
 
-        # Create plot (matplotlib imported lazily)
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-        plt.figure(figsize=(12, 6))
-        plt.plot(original, label='Original ECG', color='#2ecc71', linewidth=2)
-        plt.plot(reconstructed, label='Reconstructed', color='#e74c3c', linewidth=2)
-        plt.fill_between(range(len(original)), original, reconstructed, color='gray', alpha=0.3)
-        plt.title('ECG Signal Analysis', fontsize=14, pad=20)
-        plt.xlabel('Time', fontsize=12)
-        plt.ylabel('Amplitude', fontsize=12)
-        plt.grid(True, linestyle='--', alpha=0.7)
-        plt.legend(fontsize=10, loc='upper right')
-        plt.tight_layout()
-        
-        # Save plot to bytes
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-        buf.seek(0)
-        plot_url = base64.b64encode(buf.getvalue()).decode('utf-8')
-        plt.close()
-        
-        return jsonify({
-            'is_anomaly': bool(is_anomaly[0]),
+    logger.info("[analyze_ecg] =========================================")
+    logger.info("[analyze_ecg]          ENTERED /analyze_ecg")
+    logger.info("[analyze_ecg] =========================================")
+
+    def _stage_start(name):
+        logger.info(f"[analyze_ecg] Stage {name} START")
+        return _time.time()
+
+    def _stage_done(name, start_t):
+        logger.info(f"[analyze_ecg] Stage {name} COMPLETE ({_time.time() - start_t:.3f}s)")
+
+    try:
+        # ---- Stage 1: Input Validation ----
+        t1 = _stage_start("1 (Input Validation)")
+        data = request.get_json(silent=True) or {}
+        ecg_values = data.get('ecg_values', [])
+        logger.info(f"[analyze_ecg] Stage 1: ecg_values count={len(ecg_values)}")
+
+        if len(ecg_values) != 141:
+            logger.error(f"[analyze_ecg] Stage 1 FAILED: expected 141 values, got {len(ecg_values)}")
+            return jsonify({'success': False, 'stage': 'Input Validation',
+                            'error': f'Expected 141 ECG values, but got {len(ecg_values)}'}), 400
+
+        # Check for NaN/Inf in input
+        import numpy as np
+        ecg_np = np.array(ecg_values, dtype=np.float32)
+        if np.isnan(ecg_np).any() or np.isinf(ecg_np).any():
+            return jsonify({'success': False, 'stage': 'Input Validation',
+                            'error': 'ECG values contain NaN or Inf'}), 400
+        logger.info(f"[analyze_ecg] Stage 1: input OK. shape={ecg_np.shape}, dtype={ecg_np.dtype}, "
+                     f"min={ecg_np.min():.4f}, max={ecg_np.max():.4f}")
+        _stage_done("1 (Input Validation)", t1)
+
+        # ---- Stage 2: Model Loading ----
+        t2 = _stage_start("2 (Model Loading)")
+        global ecg_model
+        if ecg_model is None:
+            logger.info("[analyze_ecg] Stage 2: Loading PyTorch + ECG model (first time)...")
+            ecg_model_path = os.path.join(BASE_DIR, 'ecg project/best_model.pth')
+            if not os.path.exists(ecg_model_path):
+                logger.error(f"[analyze_ecg] Stage 2 FAILED: best_model.pth not found at {ecg_model_path}")
+                return jsonify({'success': False, 'stage': 'Model Loading',
+                                'error': f'ECG model file not found: {ecg_model_path}'}), 500
+            logger.info(f"[analyze_ecg] Stage 2: model file exists ({os.path.getsize(ecg_model_path)} bytes)")
+
+            try:
+                import torch
+                from detecting_anomaly_in_ecg_data_using_autoencoder_with_pytorch import Autoencoder
+                t_load = _time.time()
+                model = Autoencoder(seq_len=1, n_features=141)
+                model.load_state_dict(torch.load(ecg_model_path, map_location=torch.device('cpu')))
+                model.eval()
+                ecg_model = model
+                logger.info(f"[analyze_ecg] Stage 2: model loaded in {_time.time() - t_load:.2f}s, "
+                             f"type={type(ecg_model).__name__}")
+            except Exception as me:
+                logger.exception(f"[analyze_ecg] Stage 2 FAILED: model load error: {me}")
+                return jsonify({'success': False, 'stage': 'Model Loading',
+                                'error': f'Failed to load ECG model: {str(me)[:200]}',
+                                'traceback': _tb.format_exc() if DEBUG_MODE else None}), 500
+        else:
+            logger.info("[analyze_ecg] Stage 2: ECG model already loaded (cached)")
+        _stage_done("2 (Model Loading)", t2)
+
+        # ---- Stage 3: Prediction ----
+        t3 = _stage_start("3 (Prediction)")
+        try:
+            import torch
+            ecg_data = ecg_np.reshape(1, 1, 141)
+            ecg_tensor = torch.tensor(ecg_data, dtype=torch.float32)
+            logger.info(f"[analyze_ecg] Stage 3: tensor shape={ecg_tensor.shape}, dtype={ecg_tensor.dtype}")
+
+            with torch.no_grad():
+                reconstruction = ecg_model(ecg_tensor)
+                mse = torch.mean((ecg_tensor - reconstruction) ** 2, dim=(1, 2))
+                is_anomaly = mse > 0.1
+
+            logger.info(f"[analyze_ecg] Stage 3: reconstruction shape={reconstruction.shape}")
+            logger.info(f"[analyze_ecg] Stage 3: mse={mse.item():.6f}, threshold=0.1, is_anomaly={is_anomaly.item()}")
+
+            # Convert tensors to numpy
+            is_anomaly_np = is_anomaly.numpy()
+            original_np = ecg_data.squeeze()
+            reconstructed_np = reconstruction.squeeze().numpy()
+            logger.info(f"[analyze_ecg] Stage 3: converted to numpy. original shape={original_np.shape}, "
+                         f"reconstructed shape={reconstructed_np.shape}")
+        except Exception as pe:
+            logger.exception(f"[analyze_ecg] Stage 3 FAILED: {pe}")
+            return jsonify({'success': False, 'stage': 'Prediction',
+                            'error': f'Failed to predict: {str(pe)[:200]}',
+                            'traceback': _tb.format_exc() if DEBUG_MODE else None}), 500
+        _stage_done("3 (Prediction)", t3)
+
+        # ---- Stage 4: Plot Generation ----
+        t4 = _stage_start("4 (Plot Generation)")
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            plt.figure(figsize=(12, 6))
+            plt.plot(original_np, label='Original ECG', color='#2ecc71', linewidth=2)
+            plt.plot(reconstructed_np, label='Reconstructed', color='#e74c3c', linewidth=2)
+            plt.fill_between(range(len(original_np)), original_np, reconstructed_np, color='gray', alpha=0.3)
+            plt.title('ECG Signal Analysis', fontsize=14, pad=20)
+            plt.xlabel('Time', fontsize=12)
+            plt.ylabel('Amplitude', fontsize=12)
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.legend(fontsize=10, loc='upper right')
+            plt.tight_layout()
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            buf.seek(0)
+            plot_url = base64.b64encode(buf.getvalue()).decode('utf-8')
+            plt.close()
+            logger.info(f"[analyze_ecg] Stage 4: plot generated ({len(plot_url)} chars base64)")
+        except Exception as ple:
+            logger.exception(f"[analyze_ecg] Stage 4 FAILED: {ple}")
+            return jsonify({'success': False, 'stage': 'Plot Generation',
+                            'error': f'Failed to generate plot: {str(ple)[:200]}'}), 500
+        _stage_done("4 (Plot Generation)", t4)
+
+        # ---- Stage 5: Response ----
+        t5 = _stage_start("5 (Response)")
+        result = {
+            'success': True,
+            'is_anomaly': bool(is_anomaly_np[0]),
             'plot_url': plot_url,
             'status': 'success'
-        })
-        
+        }
+        total = _time.time() - t0
+        logger.info(f"[analyze_ecg] Stage 5: Returning response: is_anomaly={result['is_anomaly']}")
+        logger.info(f"[analyze_ecg] ====== REQUEST COMPLETE in {total:.2f}s ======")
+        _stage_done("5 (Response)", t5)
+        return jsonify(result)
+
     except Exception as e:
-        logger.error(f"Error in ECG analysis: {str(e)}")
-        return jsonify({'error': str(e), 'status': 'error'}), 400
+        logger.exception(f"[analyze_ecg] UNHANDLED EXCEPTION: {e}")
+        return jsonify({'success': False, 'stage': 'Unhandled',
+                        'error': str(e),
+                        'traceback': _tb.format_exc() if DEBUG_MODE else None}), 500
 
 @app.route('/analyze_audio', methods=['POST'])
 @login_required
