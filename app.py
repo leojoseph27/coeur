@@ -331,6 +331,14 @@ def extract_embeddings(audio_data):
         import numpy as np
         max_frames = 10
         scores, embeddings_output, _ = yamnet_model(audio_data)
+
+        # Convert TF EagerTensors to NumPy arrays before any NumPy operations.
+        # YAMNet (hub.load) returns EagerTensors, not ndarrays.
+        if hasattr(embeddings_output, 'numpy'):
+            embeddings_output = embeddings_output.numpy()
+        logger.info(f"[extract_embeddings] type={type(embeddings_output).__name__}, "
+                     f"shape={embeddings_output.shape}, dtype={embeddings_output.dtype}")
+
         embeddings_output = embeddings_output[:max_frames]
         padding_length = max_frames - embeddings_output.shape[0]
         if padding_length > 0:
