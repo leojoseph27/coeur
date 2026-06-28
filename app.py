@@ -2038,81 +2038,138 @@ REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 def generate_pdf_report(user_id, analysis_data):
-    """Generate a PDF report from the analysis data."""
+    """Generate a PDF report from the structured analysis data.
+
+    Uses the new report_data format (structured JSON with keys like
+    ai_interpretation, possible_conditions, followup, etc.) instead of
+    the old HTML-based format.
+    """
     try:
         from reportlab.lib.pagesizes import letter
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        # Create a unique filename for the report
-        filename = os.path.join(REPORTS_DIR, f"medical_report_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+        from reportlab.lib import colors
 
-        # Create the PDF document
-        doc = SimpleDocTemplate(filename, pagesize=letter)
+        # The session stores {'report_data': {...}, 'timestamp': '...'}
+        # Extract the actual report data
+        report = analysis_data.get('report_data', analysis_data)
+
+        filename = os.path.join(REPORTS_DIR, f"medical_report_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+        doc = SimpleDocTemplate(filename, pagesize=letter,
+                                topMargin=0.75*72, bottomMargin=0.75*72,
+                                leftMargin=0.75*72, rightMargin=0.75*72)
         styles = getSampleStyleSheet()
         story = []
 
-        # Add title
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=24,
-            spaceAfter=30
-        )
-        story.append(Paragraph("Medical Analysis Report", title_style))
-        story.append(Spacer(1, 12))
-        
-        # Add date
-        date_style = ParagraphStyle(
-            'DateStyle',
-            parent=styles['Normal'],
-            fontSize=12,
-            spaceAfter=20
-        )
-        story.append(Paragraph(f"Date: {datetime.now().strftime('%B %d, %Y')}", date_style))
+        # --- Title ---
+        title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'],
+                                     fontSize=22, spaceAfter=6, textColor=colors.HexColor('#f03e5f'),
+                                     alignment=1)  # center
+        story.append(Paragraph("CARDIOVASCULAR ANALYSIS REPORT", title_style))
+        story.append(Spacer(1, 4))
+
+        # --- Report metadata ---
+        meta_style = ParagraphStyle('Meta', parent=styles['Normal'], fontSize=9,
+                                    textColor=colors.grey, alignment=1, spaceAfter=20)
+        report_id = report.get('report_id', 'N/A')
+        generated_at = report.get('generated_at', datetime.now().strftime('%B %d, %Y'))
+        story.append(Paragraph(f"Report ID: {report_id} | Generated: {generated_at}", meta_style))
         story.append(Spacer(1, 12))
 
-        # Extract sections from the analysis HTML
-        sections = {
-            'Summary of Findings': '',
-            'Potential Health Concerns': '',
-            'Recommendations for Follow-up': '',
-            'Lifestyle Suggestions': '',
-            'When to Seek Immediate Medical Attention': ''
-        }
-
-        # Clean HTML content
-        content = analysis_data.get('analysis', '')
-        for section_title in sections.keys():
-            pattern = f'<h4>{section_title}</h4>\\s*<p>(.*?)</p>'
-            match = re.search(pattern, content, re.DOTALL)
-            if match:
-                sections[section_title] = unescape(match.group(1).strip())
-
-        # Add sections to the PDF
-        section_style = ParagraphStyle(
-            'SectionStyle',
-            parent=styles['Heading2'],
-            fontSize=14,
-            spaceAfter=10
-        )
-        content_style = ParagraphStyle(
-            'ContentStyle',
-            parent=styles['Normal'],
-            fontSize=12,
-            spaceAfter=20
-        )
-
-        for title, content in sections.items():
-            story.append(Paragraph(title, section_style))
-            story.append(Spacer(1, 12))
-            story.append(Paragraph(content, content_style))
+        # --- Patient info ---
+        patient = report.get('patient_info', {})
+        if patient:
+            h2 = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=13,
+                                spaceAfter=8, textColor=colors.HexColor('#f03e5f'))
+            story.append(Paragraph("Patient Information", h2))
+            info_text = f"Age: {patient.get('age', 'N/A')} | Gender: {patient.get('gender', 'N/A')} | Analysis: {', '.join(patient.get('analysis_types', ['N/A']))}"
+            story.append(Paragraph(info_text, styles['Normal']))
             story.append(Spacer(1, 12))
 
-        # Build the PDF
+        # --- Overall assessment ---
+        assessment = report.get('overall_assessment', {})
+        if assessment:
+            story.append(Paragraph("Overall Assessment", h2))
+            risk = assessment.get('risk_level', 'Unknown')
+            prob = assessment.get('probability')
+            model = assessment.get('model', 'N/A')
+            prob_text = f" | Probability: {prob}%" if prob is not None else ""
+            story.append(Paragraph(f"Risk Level: {risk}{prob_text}<br/>Model: {model}", styles['Normal']))
+            story.append(Spacer(1, 12))
+
+        # --- Key findings ---
+        findings = report.get('key_findings', [])
+        if findings:
+            story.append(Paragraph("Key Findings", h2))
+            for f in findings:
+                dot = "[!]" if f.get('status') == 'red' else "[~]" if f.get('status') == 'yellow' else "[ok]"
+                story.append(Paragraph(f"{dot} {f.get('finding', '')}: {f.get('value', '')} — {f.get('meaning', '')}", styles['Normal']))
+            story.append(Spacer(1, 12))
+
+        # --- Evidence table ---
+        evidence = report.get('evidence_table', [])
+        if evidence:
+            story.append(Paragraph("Evidence Table", h2))
+            for e in evidence:
+                risk = e.get('risk', 'N/A')
+                story.append(Paragraph(f"{e.get('finding', '')}: {e.get('value', '')} (Risk: {risk}) — {e.get('meaning', '')}", styles['Normal']))
+            story.append(Spacer(1, 12))
+
+        # --- AI sections (strip <br> tags for PDF) ---
+        def _clean_html(text):
+            if not text:
+                return 'No data available.'
+            # Replace <br> with line breaks, strip other HTML
+            text = re.sub(r'<br\s*/?>', '\n', text)
+            text = re.sub(r'<[^>]+>', '', text)
+            return unescape(text)
+
+        ai_sections = [
+            ('AI Interpretation', report.get('ai_interpretation', '')),
+            ('Possible Conditions', report.get('possible_conditions', '')),
+            ('Follow-up Recommendations', report.get('followup', '')),
+            ('Lifestyle Suggestions', report.get('lifestyle', '')),
+            ('Emergency Warning Signs', report.get('emergency', '')),
+        ]
+
+        body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=10,
+                                    spaceAfter=10, leading=14)
+
+        for title, content in ai_sections:
+            story.append(Paragraph(title, h2))
+            clean = _clean_html(content)
+            # Split by newlines and add each as a paragraph
+            for line in clean.split('\n'):
+                line = line.strip()
+                if line:
+                    story.append(Paragraph(line, body_style))
+            story.append(Spacer(1, 8))
+
+        # --- ECG / Heart Sound results ---
+        ecg_result = report.get('ecg_result', '')
+        if ecg_result:
+            story.append(Paragraph("ECG Analysis Result", h2))
+            story.append(Paragraph(_clean_html(ecg_result), body_style))
+            story.append(Spacer(1, 8))
+
+        hs_result = report.get('heart_sound_result', '')
+        if hs_result:
+            story.append(Paragraph("Heart Sound Analysis Result", h2))
+            story.append(Paragraph(_clean_html(hs_result), body_style))
+            story.append(Spacer(1, 8))
+
+        # --- Disclaimer ---
+        disclaimer = report.get('disclaimer', '')
+        if disclaimer:
+            disc_style = ParagraphStyle('Disclaimer', parent=styles['Normal'],
+                                        fontSize=8, textColor=colors.grey, spaceBefore=20)
+            story.append(Paragraph(f"<b>Clinical Disclaimer:</b> {disclaimer}", disc_style))
+
         doc.build(story)
+        logger.info(f"PDF report generated: {filename}")
         return filename
     except Exception as e:
-        logger.error(f"Error generating PDF report: {str(e)}")
+        logger.error(f"Error generating PDF report: {str(e)}", exc_info=True)
         return None
 
 @app.route('/download_report')
